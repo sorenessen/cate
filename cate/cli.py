@@ -145,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required when --env prod is used, to acknowledge live-target testing.",
     )
+    http_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be executed, but do not send any HTTP requests.",
+    )
+
 
     return parser
 
@@ -289,14 +295,31 @@ def run_http_fuzz(
     stop_on_error_rate: float,
     env: str,
     i_understand_prod: bool,
+    dry_run: bool,
     headers: Dict[str, str],
 ) -> int:
-    if env == "prod" and not i_understand_prod:
+    if env == "prod" and not i_understand_prod and not dry_run:
         print(
             "[CATE] Refusing to run against env=prod without "
             "--i-understand-prod flag. Aborting."
         )
         return 1
+
+    if dry_run:
+        print("[CATE] DRY RUN — no HTTP requests will be sent.")
+        print(f"[CATE] Environment: {env}")
+        print(f"[CATE] Target: {method.upper()} {url}")
+        print(f"[CATE] Wordlist: {wordlist}")
+        print(
+            f"[CATE] Concurrency={concurrency}, "
+            f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}"
+        )
+        if headers:
+            print(f"[CATE] Headers: {headers}")
+        if body_template:
+            print(f"[CATE] Body template: {body_template}")
+        print(f"[CATE] Placeholder: {placeholder}")
+        return 0
 
     print(f"[CATE] Environment: {env}")
     print(
@@ -361,6 +384,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             stop_on_error_rate=cfg["stop_on_error_rate"],
             env=cfg["env"],
             i_understand_prod=args.i_understand_prod,
+            dry_run=args.dry_run,
             headers=cfg["headers"],
         )
 
