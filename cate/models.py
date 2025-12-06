@@ -22,6 +22,11 @@ class JobConfig:
     output_path: Optional[str] = None  # JSONL log
     placeholder: str = "{payload}"     # placeholder in body or query
 
+    # Safety controls
+    max_rps: float = 5.0               # max requests per second (global)
+    stop_on_error_rate: float = 0.5    # abort if recent error fraction exceeds this
+    error_window: int = 50             # how many recent requests to consider
+
 
 @dataclass
 class Result:
