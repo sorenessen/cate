@@ -10,6 +10,25 @@ from .engine import run_job
 from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
 
+def parse_headers(header_list: Optional[list[str]]) -> dict[str, str]:
+    """
+    Parse repeated --header 'Key: Value' into a dict.
+    Ignores malformed entries.
+    """
+    headers: dict[str, str] = {}
+    if not header_list:
+        return headers
+
+    for raw in header_list:
+        # Split on the first colon only
+        if ":" not in raw:
+            continue
+        key, value = raw.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            headers[key] = value
+    return headers
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -63,6 +82,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="{payload}",
         help="Placeholder string in URL or body. Default: {payload}",
     )
+
+    http_parser.add_argument(
+        "--header",
+        action="append",
+        default=None,
+        help=(
+            "Optional HTTP header, can be used multiple times. "
+            'Example: --header "Authorization: Bearer TOKEN" '
+            '--header "X-Env: dev"'
+        ),
+    )
+
 
     # NEW: body template
     http_parser.add_argument(
@@ -166,6 +197,7 @@ def run_http_fuzz(
     stop_on_error_rate: float,
     env: str,
     i_understand_prod: bool,
+    headers: dict[str, str],
 ) -> int:
     if env == "prod" and not i_understand_prod:
         print(
@@ -181,8 +213,10 @@ def run_http_fuzz(
     )
     if body_template:
         print(f"[CATE] Using body template: {body_template!r}")
+    if headers:
+        print(f"[CATE] Using headers: {headers!r}")
 
-    target = Target(url=url, method=method)
+    target = Target(url=url, method=method, headers=headers or None)
     config = JobConfig(
         target=target,
         wordlist_path=wordlist,
@@ -234,6 +268,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             stop_on_error_rate=args.stop_on_error_rate,
             env=args.env,
             i_understand_prod=args.i_understand_prod,
+            headers=parse_headers(args.header),
         )
 
     parser.error("Unknown command")
