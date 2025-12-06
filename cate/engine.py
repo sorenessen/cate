@@ -41,7 +41,7 @@ async def run_job(config: JobConfig) -> List[Result]:
 
     timeout = httpx.Timeout(config.timeout_seconds)
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
 
         async def worker(payload: str) -> None:
             if stop_flag["stop"]:
