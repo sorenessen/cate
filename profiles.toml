@@ -1,0 +1,22 @@
+[profiles.delphonix-login-dev]
+url = "https://delphonix.com/login.php"
+method = "POST"
+wordlist = "./cate/tests/test_wordlist.txt"
+body_template = "user=admin&pass={payload}"
+placeholder = "{payload}"
+concurrency = 2
+timeout = 10.0
+max_rps = 0.5
+stop_on_error_rate = 0.5
+env = "dev"
+
+[profiles.example-get]
+url = "https://example.com/?q={payload}"
+method = "GET"
+wordlist = "./cate/tests/test_wordlist.txt"
+placeholder = "{payload}"
+concurrency = 1
+timeout = 10.0
+max_rps = 1.0
+stop_on_error_rate = 0.5
+env = "dev"

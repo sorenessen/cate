@@ -4,23 +4,24 @@ import argparse
 import asyncio
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict, List, Any
 
 from .engine import run_job
 from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
+from .profiles import load_profile, ProfileNotFound
 
-def parse_headers(header_list: Optional[list[str]]) -> dict[str, str]:
+
+def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
     """
     Parse repeated --header 'Key: Value' into a dict.
     Ignores malformed entries.
     """
-    headers: dict[str, str] = {}
+    headers: Dict[str, str] = {}
     if not header_list:
         return headers
 
     for raw in header_list:
-        # Split on the first colon only
         if ":" not in raw:
             continue
         key, value = raw.split(":", 1)
@@ -29,6 +30,7 @@ def parse_headers(header_list: Optional[list[str]]) -> dict[str, str]:
         if key:
             headers[key] = value
     return headers
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -43,9 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run a simple HTTP fuzz / brute-force job",
     )
 
+    # NOTE: url/wordlist optional when using --profile; we enforce in code
     http_parser.add_argument(
         "--url",
-        required=True,
+        required=False,
+        default=None,
         help="Target URL. Use {payload} as a placeholder in the query or path.",
     )
     http_parser.add_argument(
@@ -55,7 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     http_parser.add_argument(
         "--wordlist",
-        required=True,
+        required=False,
+        default=None,
         help="Path to wordlist file (one payload per line).",
     )
     http_parser.add_argument(
@@ -84,19 +89,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     http_parser.add_argument(
-        "--header",
-        action="append",
-        default=None,
-        help=(
-            "Optional HTTP header, can be used multiple times. "
-            'Example: --header "Authorization: Bearer TOKEN" '
-            '--header "X-Env: dev"'
-        ),
-    )
-
-
-    # NEW: body template
-    http_parser.add_argument(
         "--body-template",
         type=str,
         default=None,
@@ -108,7 +100,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    # ---- SAFETY CONTROLS ----
+    http_parser.add_argument(
+        "--header",
+        action="append",
+        default=None,
+        help=(
+            "Optional HTTP header, can be used multiple times. "
+            'Example: --header "Authorization: Bearer TOKEN" '
+            '--header "X-Env: dev"'
+        ),
+    )
+
+    # NEW: profile name
+    http_parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help="Optional profile name to load from profiles.toml "
+             "(e.g. 'delphonix-login-dev').",
+    )
+
+    # Safety controls
     http_parser.add_argument(
         "--max-rps",
         type=float,
@@ -154,7 +166,6 @@ def summarize_results(results) -> None:
 
     print("\n[CATE] Response groups (by status_code, content_length):")
 
-    # Sort by count descending
     sorted_groups = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
 
     for (status_code, content_length), payloads in sorted_groups:
@@ -162,7 +173,6 @@ def summarize_results(results) -> None:
         status_str = "None" if status_code is None else str(status_code)
         size_str = "None" if content_length is None else str(content_length)
 
-        # Show up to 5 sample payloads
         samples = payloads[:5]
         sample_str = ", ".join(samples)
         more = "" if count <= 5 else f" (+{count - 5} more)"
@@ -172,7 +182,6 @@ def summarize_results(results) -> None:
             f"{count} payload(s). Samples: [{sample_str}]{more}"
         )
 
-    # Highlight potential outliers (small groups)
     print("\n[CATE] Potential outliers (rare response shapes):")
     for (status_code, content_length), payloads in sorted_groups:
         if len(payloads) <= 3:
@@ -182,6 +191,89 @@ def summarize_results(results) -> None:
                 f"  * status={status_str}, size={size_str} bytes → "
                 f"{len(payloads)} payload(s): {payloads}"
             )
+
+
+def build_effective_config(args) -> Dict[str, Any]:
+    """
+    Combine profile (if any) + CLI flags into a single config dict.
+
+    Rules:
+      - If --profile is provided, it supplies the baseline config.
+      - CLI headers always override/extend profile headers.
+      - CLI env, output, and i-understand-prod are always honored.
+      - If no profile is given, URL and wordlist must be supplied via CLI.
+    """
+    headers_from_cli = parse_headers(args.header)
+    profile_data: Dict[str, Any] | None = None
+
+    if args.profile:
+        try:
+            profile_data = load_profile(args.profile)
+        except FileNotFoundError as e:
+            print(f"[CATE] {e}")
+            raise SystemExit(1)
+        except ProfileNotFound as e:
+            print(f"[CATE] {e}")
+            raise SystemExit(1)
+
+    if profile_data:
+        url = profile_data.get("url")
+        method = profile_data.get("method", args.method)
+        wordlist = profile_data.get("wordlist", args.wordlist)
+        body_template = profile_data.get("body_template", args.body_template)
+        placeholder = profile_data.get("placeholder", args.placeholder)
+        concurrency = profile_data.get("concurrency", args.concurrency)
+        timeout = profile_data.get("timeout", args.timeout)
+        max_rps = profile_data.get("max_rps", args.max_rps)
+        stop_on_error_rate = profile_data.get("stop_on_error_rate", args.stop_on_error_rate)
+        env = profile_data.get("env", args.env)
+
+        profile_headers = profile_data.get("headers", {})
+        if not isinstance(profile_headers, dict):
+            profile_headers = {}
+
+        headers = {**profile_headers, **headers_from_cli}
+
+        if not url:
+            print("[CATE] Profile is missing 'url'.")
+            raise SystemExit(1)
+        if not wordlist:
+            print("[CATE] Profile is missing 'wordlist' and none supplied via CLI.")
+            raise SystemExit(1)
+
+    else:
+        if not args.url:
+            print("[CATE] --url is required if no --profile is specified.")
+            raise SystemExit(1)
+        if not args.wordlist:
+            print("[CATE] --wordlist is required if no --profile is specified.")
+            raise SystemExit(1)
+
+        url = args.url
+        method = args.method
+        wordlist = args.wordlist
+        body_template = args.body_template
+        placeholder = args.placeholder
+        concurrency = args.concurrency
+        timeout = args.timeout
+        max_rps = args.max_rps
+        stop_on_error_rate = args.stop_on_error_rate
+        env = args.env
+        headers = headers_from_cli
+
+    return {
+        "url": url,
+        "method": method,
+        "wordlist": wordlist,
+        "body_template": body_template,
+        "placeholder": placeholder,
+        "concurrency": concurrency,
+        "timeout": timeout,
+        "max_rps": max_rps,
+        "stop_on_error_rate": stop_on_error_rate,
+        "env": env,
+        "headers": headers,
+    }
 
 
 def run_http_fuzz(
@@ -197,7 +289,7 @@ def run_http_fuzz(
     stop_on_error_rate: float,
     env: str,
     i_understand_prod: bool,
-    headers: dict[str, str],
+    headers: Dict[str, str],
 ) -> int:
     if env == "prod" and not i_understand_prod:
         print(
@@ -250,25 +342,26 @@ def run_http_fuzz(
     return asyncio.run(_run())
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "http-fuzz":
+        cfg = build_effective_config(args)
         return run_http_fuzz(
-            url=args.url,
-            method=args.method,
-            wordlist=args.wordlist,
-            concurrency=args.concurrency,
-            timeout=args.timeout,
+            url=cfg["url"],
+            method=cfg["method"],
+            wordlist=cfg["wordlist"],
+            concurrency=cfg["concurrency"],
+            timeout=cfg["timeout"],
             output=args.output,
-            placeholder=args.placeholder,
-            body_template=args.body_template,
-            max_rps=args.max_rps,
-            stop_on_error_rate=args.stop_on_error_rate,
-            env=args.env,
+            placeholder=cfg["placeholder"],
+            body_template=cfg["body_template"],
+            max_rps=cfg["max_rps"],
+            stop_on_error_rate=cfg["stop_on_error_rate"],
+            env=cfg["env"],
             i_understand_prod=args.i_understand_prod,
-            headers=parse_headers(args.header),
+            headers=cfg["headers"],
         )
 
     parser.error("Unknown command")
