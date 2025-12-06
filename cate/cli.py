@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections import defaultdict
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, Dict, List
 
 from .engine import run_job
 from .logging_utils import write_results_jsonl
@@ -63,6 +64,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Placeholder string in URL or body. Default: {payload}",
     )
 
+    # NEW: body template
+    http_parser.add_argument(
+        "--body-template",
+        type=str,
+        default=None,
+        help=(
+            "Optional body/template string. "
+            "Use {payload} as a placeholder. "
+            "Example: 'user=admin&pass={payload}' or "
+            '\'{"user":"admin","pass":"{payload}"}\''
+        ),
+    )
+
     # ---- SAFETY CONTROLS ----
     http_parser.add_argument(
         "--max-rps",
@@ -92,6 +106,53 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def summarize_results(results) -> None:
+    """
+    Print a quick summary grouping by (status_code, content_length)
+    and showing sample payloads. Helps spot outliers fast.
+    """
+    groups: Dict[Tuple[Optional[int], Optional[int]], List[str]] = defaultdict(list)
+
+    for r in results:
+        key = (r.status_code, r.content_length)
+        groups[key].append(r.payload)
+
+    if not groups:
+        print("[CATE] No results to summarize.")
+        return
+
+    print("\n[CATE] Response groups (by status_code, content_length):")
+
+    # Sort by count descending
+    sorted_groups = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
+
+    for (status_code, content_length), payloads in sorted_groups:
+        count = len(payloads)
+        status_str = "None" if status_code is None else str(status_code)
+        size_str = "None" if content_length is None else str(content_length)
+
+        # Show up to 5 sample payloads
+        samples = payloads[:5]
+        sample_str = ", ".join(samples)
+        more = "" if count <= 5 else f" (+{count - 5} more)"
+
+        print(
+            f"  - status={status_str}, size={size_str} bytes: "
+            f"{count} payload(s). Samples: [{sample_str}]{more}"
+        )
+
+    # Highlight potential outliers (small groups)
+    print("\n[CATE] Potential outliers (rare response shapes):")
+    for (status_code, content_length), payloads in sorted_groups:
+        if len(payloads) <= 3:
+            status_str = "None" if status_code is None else str(status_code)
+            size_str = "None" if content_length is None else str(content_length)
+            print(
+                f"  * status={status_str}, size={size_str} bytes → "
+                f"{len(payloads)} payload(s): {payloads}"
+            )
+
+
 def run_http_fuzz(
     url: str,
     method: str,
@@ -100,6 +161,7 @@ def run_http_fuzz(
     timeout: float,
     output: Optional[str],
     placeholder: str,
+    body_template: Optional[str],
     max_rps: float,
     stop_on_error_rate: float,
     env: str,
@@ -114,9 +176,11 @@ def run_http_fuzz(
 
     print(f"[CATE] Environment: {env}")
     print(
-        f"[CATE] Config: concurrency={concurrency}, max_rps={max_rps}, "
-        f"stop_on_error_rate={stop_on_error_rate}"
+        f"[CATE] Config: method={method}, concurrency={concurrency}, "
+        f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}"
     )
+    if body_template:
+        print(f"[CATE] Using body template: {body_template!r}")
 
     target = Target(url=url, method=method)
     config = JobConfig(
@@ -126,6 +190,7 @@ def run_http_fuzz(
         timeout_seconds=timeout,
         output_path=output,
         placeholder=placeholder,
+        body_template=body_template,
         max_rps=max_rps,
         stop_on_error_rate=stop_on_error_rate,
     )
@@ -144,6 +209,8 @@ def run_http_fuzz(
         print(f"[CATE] Completed {total} payloads ({errors} errors).")
         if output:
             print(f"[CATE] Results written to {output}")
+
+        summarize_results(results)
         return 0
 
     return asyncio.run(_run())
@@ -162,6 +229,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             timeout=args.timeout,
             output=args.output,
             placeholder=args.placeholder,
+            body_template=args.body_template,
             max_rps=args.max_rps,
             stop_on_error_rate=args.stop_on_error_rate,
             env=args.env,

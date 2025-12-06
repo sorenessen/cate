@@ -74,10 +74,21 @@ async def run_job(config: JobConfig) -> List[Result]:
                 headers = config.target.headers or {}
 
                 body: Optional[str] = None
-                if config.placeholder in url:
-                    url = url.replace(config.placeholder, payload)
+                
+                # If a body_template is provided, use it and still allow placeholder in URL.
+                if config.body_template is not None:
+                    # Replace placeholder in URL if present
+                    if config.placeholder in url:
+                        url = url.replace(config.placeholder, payload)
+                    # Replace placeholder in body template
+                    body = config.body_template.replace(config.placeholder, payload)
                 else:
-                    body = payload
+                    # Legacy behavior: if placeholder is in URL, substitute there,
+                    # otherwise send the raw payload as the body.
+                    if config.placeholder in url:
+                        url = url.replace(config.placeholder, payload)
+                    else:
+                        body = payload
 
                 start = datetime.utcnow()
                 error: Optional[str] = None
