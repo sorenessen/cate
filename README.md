@@ -1,63 +1,75 @@
-CATE — Calypso Automated Testing Engine
-Local-first HTTP fuzzing, brute-force simulation, and behavioral response analysis.
+# CATE — Calypso Automated Testing Engine
 
+Local-first HTTP fuzzing, brute-force simulation, and behavioral response analysis.  
 Part of the Calypso Integrity Platform.
 
 CATE is a lightweight, safety-gated HTTP fuzzing engine for controlled security testing of your own systems.
-It supports:
 
-GET + POST fuzzing
+It currently supports:
 
-Payload injection ({payload})
-
-Body templating
-
-Custom headers
-
-Rate limiting
-
-Error-rate shutdown
-
-Profile-based execution (profiles.toml)
-
-Response grouping + outlier detection
+- GET and POST fuzzing  
+- Payload injection via `{payload}` placeholders  
+- Body templating  
+- Custom headers  
+- Rate limiting  
+- Error-rate shutdown  
+- Profile-based execution via `profiles.toml`  
+- Response grouping and outlier detection  
 
 This is v0.1, intentionally simple, fast, and local-first.
 
-🚀 Features (v0.1)
-✔ Safe by default
+---
 
-Requires explicit acknowledgement to run against env=prod
+## Features
 
-Built for local + dev testing flow
+### Safe by default
 
-✔ GET / POST fuzzing
+- Refuses to run against `env=prod` unless `--i-understand-prod` is provided.  
+- Designed for local and dev environments first.
 
-Inject {payload} into URLs:
+---
 
+### GET / POST fuzzing
+
+Inject `{payload}` into URLs:
+
+```text
 https://example.com/?q={payload}
+```
+Use body templates for POST:
 
+```text
+user=admin&pass={payload}
+```
 
-Or POST bodies:
+---
 
---body-template "user=admin&pass={payload}"
+### Custom headers
 
-✔ Custom headers
---header "X-Test: Hello" \
---header "Authorization: Bearer TOKEN"
+```bash
+python -m cate.cli http-fuzz \
+  --url "https://example.com/api" \
+  --method GET \
+  --header "Authorization: Bearer TOKEN" \
+  --header "X-Test: 123" \
+  --wordlist ./wordlist.txt
+```
 
-✔ Rate limiting & error controls
+---
 
---max-rps to avoid overwhelming services
+### Rate limiting and error controls
 
---stop-on-error-rate to halt at suspicious error spikes
+`--max-rps` sets a global requests-per-second limit.
 
-✔ Profiles system
+`--stop-on-error-rate` stops the run if recent errors exceed a threshold.
 
-Never retype long commands again — store fuzzing configs in profiles.toml.
+---
 
-Example:
+## Profiles (`profiles.toml`)
 
+You can define reusable configurations:
+
+```toml
 [profiles.delphonix-login-dev]
 url = "https://delphonix.com/login.php"
 method = "POST"
@@ -69,77 +81,23 @@ timeout = 10.0
 max_rps = 0.5
 stop_on_error_rate = 0.5
 env = "dev"
+```
 
+Run the profile:
 
-Run it with:
-
-python -m cate.cli http-fuzz --profile delphonix-login-dev
-
-✔ Response grouping + outlier detection
-
-CATE groups responses by (status_code, content_length) so you can spot:
-
-auth success/failure
-
-redirects
-
-error pages
-
-content-length anomalies
-
-timing differences
-
-This is the heart of “behavioral fuzzing.”
-
-📦 Installation
-git clone https://github.com/yourname/cate
-cd cate
-pip install -r requirements.txt
-
-
-(Poetry support coming in later versions.)
-
-🏁 Quick Start
-1. GET fuzz
-python -m cate.cli http-fuzz \
-  --url "https://example.com/?q={payload}" \
-  --wordlist ./cate/tests/test_wordlist.txt
-
-2. POST fuzz
-python -m cate.cli http-fuzz \
-  --url "https://example.com/login" \
-  --method POST \
-  --body-template "user=admin&pass={payload}" \
-  --wordlist ./cate/tests/test_wordlist.txt
-
-3. With headers
-python -m cate.cli http-fuzz \
-  --url "https://example.com/api" \
-  --method GET \
-  --header "Authorization: Bearer test123" \
-  --wordlist ./wordlist.txt
-
-4. Using profiles
+```bash
 python -m cate.cli http-fuzz \
   --profile delphonix-login-dev \
-  --output ./logs/login-profile.jsonl
+  --output ./logs/delph-login.jsonl
+```
 
-🗂 profiles.toml Format
-[profiles.example]
-url = "https://example.com/?q={payload}"
-method = "GET"
-wordlist = "./cate/tests/test_wordlist.txt"
-placeholder = "{payload}"
-concurrency = 5
-timeout = 10.0
-max_rps = 1.0
-stop_on_error_rate = 0.5
-env = "dev"
+---
 
-📄 Output Format (JSONL)
+## Output format (JSONL)
 
-Each result is a separate JSON line:
+Each line contains one result:
 
+```json
 {
   "payload": "password",
   "status_code": 200,
@@ -148,73 +106,57 @@ Each result is a separate JSON line:
   "error": null,
   "timestamp": "2025-12-06T21:59:31.471253Z"
 }
+```
 
+This can be consumed by Elastic, Splunk, Datadog, Loki, pandas, etc.
 
-Ideal for:
+---
 
-Elastic / Kibana
+## Safety flags
 
-Splunk
+| Flag                  | Description                                       |
+|----------------------|---------------------------------------------------|
+| `--env dev`          | Environment selection                              |
+| `--i-understand-prod`| Required to run against prod                       |
+| `--max-rps`          | Requests-per-second governor                        |
+| `--stop-on-error-rate` | Auto-shutdown on high error rate                 |
 
-Datadog
+---
 
-Loki / Grafana
+## Project structure
 
-Pandas analysis
-
-🔒 Safety Controls
-Flag	Purpose
-`--env dev	stage
---i-understand-prod	Required for production fuzzing
---max-rps	Global rate limit
---stop-on-error-rate	Auto-shutdown on error spikes
-
-CATE is secure-by-default and refuses production fuzzing unless explicitly acknowledged.
-
-📁 Project Structure
+```text
 cate/
-  cli.py              # CLI parser + profiles integration
-  engine.py           # async workers, RPS governor
-  models.py           # Target, JobConfig, Result
-  logging_utils.py    # JSONL writer
-  profiles.py         # TOML profiles loader
+  cli.py            # CLI + profiles integration
+  engine.py         # Async workers, RPS governor
+  models.py         # Target, JobConfig, Result models
+  logging_utils.py  # JSONL logging
+  profiles.py       # TOML profile loader
   tests/
     test_wordlist.txt
+profiles.toml        # Profile definitions
+logs/                # JSONL outputs
+```
 
-profiles.toml         # your reusable profiles
-logs/                 # output JSONL
+---
 
-🗺 Roadmap
-v0.2
+## Roadmap
 
-Request/response event logs
+### v0.2  
+Richer logging, timing histograms, HTML/Markdown reports.
 
-Timing histograms
+### v0.3  
+Stateful flows (login → action → logout), cookie/session support.
 
-Summary HTML reports
+### v0.4  
+Distributed workers, queues, dashboard.
 
-v0.3
+### v0.5  
+Integration with Calypso Labs / CopyCat / Integrity Suite.
 
-Stateful flows (login → action → logout)
+---
 
-Cookie/session support
+## Maintainer
 
-Multi-step fuzzing plans
-
-v0.4
-
-Distributed workers
-
-Redis queue
-
-Dashboard UI
-
-v0.5
-
-Integration with Calypso Labs: CopyCat metadata, Integrity Suite workflows
-
-👤 Maintainer
-
-Soren Essen
-Principal Engineer & Product Architect
-Calypso Labs
+**Soren Essen**  
+Principal Engineer & Product Architect, Calypso Labs
