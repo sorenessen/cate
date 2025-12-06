@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "cate"
+version = "0.1.0"
+description = "Calypso Automated Testing Engine – local HTTP fuzzing / brute-force tester"
+authors = ["Soren Essen <sorenessen@gmail.com>"]
+packages = [{ include = "cate" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+httpx = "^0.27.0"
+rich = "^13.9.0"          # for nicer console output (optional)
+
+[tool.poetry.scripts]
+cate = "cate.cli:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
