@@ -11,6 +11,25 @@ from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 
+import sys
+
+# Simple ANSI color helpers
+_RESET = "\033[0m"
+_BOLD = "\033[1m"
+_FG_CYAN = "\033[36m"
+_FG_GREEN = "\033[32m"
+_FG_YELLOW = "\033[33m"
+_FG_RED = "\033[31m"
+_FG_MAGENTA = "\033[35m"
+
+_SUPPORTS_COLOR = sys.stdout.isatty()
+
+
+def _color(text: str, code: str) -> str:
+    if not _SUPPORTS_COLOR:
+        return text
+    return f"{code}{text}{_RESET}"
+
 
 def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
     """
@@ -298,39 +317,51 @@ def run_http_fuzz(
     dry_run: bool,
     headers: Dict[str, str],
 ) -> int:
+    # Safety: block real prod runs without explicit flag
     if env == "prod" and not i_understand_prod and not dry_run:
         print(
-            "[CATE] Refusing to run against env=prod without "
-            "--i-understand-prod flag. Aborting."
+            _color(
+                "[CATE] Refusing to run against env=prod without --i-understand-prod flag. Aborting.",
+                _FG_RED,
+            )
         )
         return 1
 
+    # DRY RUN: show what *would* happen, then exit before making any requests
     if dry_run:
-        print("[CATE] DRY RUN — no HTTP requests will be sent.")
-        print(f"[CATE] Environment: {env}")
-        print(f"[CATE] Target: {method.upper()} {url}")
-        print(f"[CATE] Wordlist: {wordlist}")
+        print(_color("[CATE] DRY RUN — no HTTP requests will be sent.", _FG_MAGENTA))
+        print(_color(f"[CATE] Environment: {env}", _FG_CYAN))
+        print(_color(f"[CATE] Target: {method.upper()} {url}", _FG_CYAN))
+        print(_color(f"[CATE] Wordlist: {wordlist}", _FG_CYAN))
         print(
-            f"[CATE] Concurrency={concurrency}, "
-            f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}"
+            _color(
+                f"[CATE] Concurrency={concurrency}, "
+                f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}",
+                _FG_CYAN,
+            )
         )
         if headers:
-            print(f"[CATE] Headers: {headers}")
+            print(_color(f"[CATE] Headers: {headers}", _FG_CYAN))
         if body_template:
-            print(f"[CATE] Body template: {body_template}")
-        print(f"[CATE] Placeholder: {placeholder}")
+            print(_color(f"[CATE] Body template: {body_template}", _FG_CYAN))
+        print(_color(f"[CATE] Placeholder: {placeholder}", _FG_CYAN))
         return 0
 
-    print(f"[CATE] Environment: {env}")
+    # Normal run header
+    print(_color(f"[CATE] Environment: {env}", _FG_CYAN))
     print(
-        f"[CATE] Config: method={method}, concurrency={concurrency}, "
-        f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}"
+        _color(
+            f"[CATE] Config: method={method}, concurrency={concurrency}, "
+            f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}",
+            _FG_CYAN,
+        )
     )
     if body_template:
-        print(f"[CATE] Using body template: {body_template!r}")
+        print(_color(f"[CATE] Using body template: {body_template!r}", _FG_CYAN))
     if headers:
-        print(f"[CATE] Using headers: {headers!r}")
+        print(_color(f"[CATE] Using headers: {headers!r}", _FG_CYAN))
 
+    # Build job config
     target = Target(url=url, method=method, headers=headers or None)
     config = JobConfig(
         target=target,
@@ -355,14 +386,29 @@ def run_http_fuzz(
             for r in results
             if r.error or (r.status_code is not None and r.status_code >= 500)
         )
-        print(f"[CATE] Completed {total} payloads ({errors} errors).")
+        if errors:
+            print(
+                _color(
+                    f"[CATE] Completed {total} payloads ({errors} errors).",
+                    _FG_YELLOW,
+                )
+            )
+        else:
+            print(
+                _color(
+                    f"[CATE] Completed {total} payloads (0 errors).",
+                    _FG_GREEN,
+                )
+            )
+
         if output:
-            print(f"[CATE] Results written to {output}")
+            print(_color(f"[CATE] Results written to {output}", _FG_GREEN))
 
         summarize_results(results)
         return 0
 
     return asyncio.run(_run())
+
 
 
 def main(argv: Optional[List[str]] = None) -> int:
