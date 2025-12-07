@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List, Any
@@ -211,6 +212,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show the flow steps without sending any HTTP requests.",
     )
+    flow_parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help=(
+            "Optional output prefix for logs. "
+            "If set, writes <prefix>.jsonl and <prefix>.summary.md"
+        ),
+    )
 
     return parser
 
@@ -257,6 +267,62 @@ def summarize_results(results) -> None:
                 f"  * status={status_str}, size={size_str} bytes → "
                 f"{len(payloads)} payload(s): {payloads}"
             )
+
+def write_flow_logs(output_prefix: str, results: List[Dict[str, Any]]) -> None:
+    """
+    Write flow execution logs:
+
+      - <output_prefix>.jsonl       : one JSON object per step
+      - <output_prefix>.summary.md  : human-readable Markdown summary
+    """
+    base = Path(output_prefix)
+    jsonl_path = Path(f"{output_prefix}.jsonl")
+    summary_md_path = Path(f"{output_prefix}.summary.md")
+
+    # JSONL: one line per step
+    with jsonl_path.open("w", encoding="utf-8") as f:
+        for r in results:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+    # Markdown summary
+    total = len(results)
+    failures = sum(1 for r in results if not r.get("ok"))
+    avg_ms = (
+        sum(r.get("elapsed_ms", 0.0) for r in results) / total
+        if total > 0
+        else 0.0
+    )
+
+    lines: List[str] = []
+    lines.append("# CATE Flow Summary")
+    lines.append("")
+    lines.append(f"- **Steps**: {total}")
+    lines.append(f"- **Failures**: {failures}")
+    lines.append(f"- **Avg latency**: {avg_ms:.2f} ms")
+    lines.append("")
+    lines.append("## Per-step results")
+    lines.append("")
+    lines.append("| Step | Method | URL | Status | OK | Latency (ms) | Bytes | Error |")
+    lines.append("|------|--------|-----|--------|----|-------------:|------:|-------|")
+
+    for r in results:
+        step = r.get("step", "")
+        method = r.get("method", "")
+        url = r.get("url", "")
+        status = r.get("status_code", "")
+        ok = "✅" if r.get("ok") else "❌"
+        latency = f"{r.get('elapsed_ms', 0.0):.1f}"
+        size = r.get("bytes", 0)
+        error = r.get("error") or ""
+        # escape pipes in URL / error for markdown
+        url = str(url).replace("|", "\\|")
+        error = str(error).replace("|", "\\|")
+        lines.append(
+            f"| {step} | {method} | {url} | {status} | {ok} | {latency} | {size} | {error} |"
+        )
+
+    summary_md_path.write_text("\n".join(lines), encoding="utf-8")
+
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
     """
@@ -717,18 +783,29 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(_color("[CATE] DRY RUN — not executing flow (v0.3.0).", _FG_MAGENTA))
             return 0
 
-        # REAL EXECUTION: run the flow with a shared HTTP client
+        # Safety: prevent accidental prod without explicit opt-in
+        if args.env == "prod" and not args.i_understand_prod:
+            print(
+                _color(
+                    "[CATE] Refusing to run flow against env=prod without "
+                    "--i-understand-prod flag. Aborting.",
+                    _FG_RED,
+                )
+            )
+            return 1
+
         print(
             _color(
-                "[CATE] Executing flow (v0.3.0 stateful HTTP run)…",
+                f"[CATE] Executing flow (v0.3.0 stateful HTTP run) in env={args.env} "
+                f"(timeout={args.timeout}s, max_rps={args.max_rps})…",
                 _FG_CYAN,
             )
         )
 
         results = run_flow(
             flow,
-            timeout=args.timeout if hasattr(args, "timeout") else 10.0,
-            max_rps=args.max_rps if hasattr(args, "max_rps") else 2.0,
+            timeout=args.timeout,
+            max_rps=args.max_rps,
         )
 
         print("\n[CATE] Flow results:")
@@ -747,6 +824,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not r["ok"]:
                 failures += 1
 
+        if args.output:
+            write_flow_logs(args.output, results)
+            print(
+                _color(
+                    f"[CATE] Flow logs written to {args.output}.jsonl and {args.output}.summary.md",
+                    _FG_CYAN,
+                )
+            )
+
         if failures:
             print(
                 _color(
@@ -758,6 +844,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         print(_color("[CATE] Flow completed successfully.", _FG_GREEN))
         return 0
+
 
     # Fallback --------------------------------------------------------------
     parser.error("Unknown command")
