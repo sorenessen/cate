@@ -111,6 +111,76 @@ Each line contains one result:
 This can be consumed by Elastic, Splunk, Datadog, Loki, pandas, etc.
 
 ---
+## Logging and reports (v0.2)
+
+When you pass `--output`, CATE writes a structured JSONL log for every payload, and also generates two summary artifacts next to it:
+
+- `run.jsonl` – one JSON object per payload (raw results, same as before)
+- `run.summary.json` – machine-readable rollup (totals, error rate, latency stats, status counts, sample errors)
+- `run.summary.md` – human-friendly Markdown report that renders nicely in GitHub, VS Code, or any Markdown viewer
+
+### Example
+
+```bash
+python -m cate.cli http-fuzz \
+  --profile delphonix-login-dev \
+  --output ./logs/delphonix-login.jsonl
+```
+This will create:
+
+`logs/delphonix-login.jsonl`
+
+`logs/delphonix-login.summary.json`
+
+`logs/delphonix-login.summary.md`
+
+A trimmed example of `*.summary.json:`
+
+```{
+  "generated_at": "2025-12-07T02:03:36.782954Z",
+  "target": {
+    "method": "POST",
+    "url": "https://delphonix.com/login.php"
+  },
+  "env": "dev",
+  "wordlist": "./cate/tests/test_wordlist.txt",
+  "concurrency": 2,
+  "timeout_seconds": 10.0,
+  "max_rps": 0.5,
+  "stop_on_error_rate": 0.5,
+  "total_payloads": 4,
+  "error_count": 0,
+  "error_rate": 0.0,
+  "status_counts": {
+    "200": 4
+  },
+  "latency": {
+    "count": 4,
+    "min_ms": 100.43,
+    "max_ms": 930.23,
+    "mean_ms": 350.12,
+    "p50_ms": 210.77,
+    "p90_ms": 880.54,
+    "p99_ms": 925.00
+  },
+  "error_examples": []
+}
+```
+
+
+#### And the corresponding `*.summary.md` includes:
+
+* Target details (method, URL, env, wordlist, rate limits)
+
+* Totals and error rate
+
+* Status code table
+
+* Latency table (min / max / mean / p50 / p90 / p99)
+
+* A list of sample error or anomaly payloads (when any exist)
+
+---
 
 ## Safety flags
 
