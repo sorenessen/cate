@@ -5,21 +5,15 @@ import asyncio
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List, Any
+from statistics import mean
+from datetime import datetime
+import sys
 
 from .engine import run_job
 from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
-
-# Summary Logging Imports
-from statistics import mean
-from datetime import datetime
-
-# Import Flow Loaders
-from .profiles import load_profile, ProfileNotFound
-from .flows import load_flow, FlowNotFound
-
-import sys
+from .flows import load_flow, run_flow, FlowNotFound
 
 # Simple ANSI color helpers
 _RESET = "\033[0m"
@@ -180,17 +174,42 @@ def build_parser() -> argparse.ArgumentParser:
 
     flow_parser = subparsers.add_parser(
         "http-flow",
-        help="Run a multi-step HTTP flow (stateful sequence).",
+        help="Run a stateful HTTP flow (login -> follow-up calls, etc.)",
     )
+
     flow_parser.add_argument(
         "--flow",
         required=True,
-        help="Name of the flow to run (from flows.toml), e.g. 'delphonix-login-sequence'.",
+        help="Name of the flow to run (as defined in flows.toml).",
+    )
+    flow_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="Per-request timeout in seconds. Default: 10",
+    )
+    flow_parser.add_argument(
+        "--max-rps",
+        type=float,
+        default=2.0,
+        help="Max requests per second across the flow. Default: 2.0",
+    )
+    flow_parser.add_argument(
+        "--env",
+        type=str,
+        default="dev",
+        choices=["dev", "stage", "prod"],
+        help="Environment label for this flow. Default: dev",
+    )
+    flow_parser.add_argument(
+        "--i-understand-prod",
+        action="store_true",
+        help="Required when --env prod is used, to acknowledge live-target testing.",
     )
     flow_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show the planned flow steps, but do not send any HTTP requests.",
+        help="Show the flow steps without sending any HTTP requests.",
     )
 
     return parser
@@ -645,11 +664,11 @@ def run_http_fuzz(
     return asyncio.run(_run())
 
 
-
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # Handle http-fuzz -------------------------------------------------------
     if args.command == "http-fuzz":
         cfg = build_effective_config(args)
         return run_http_fuzz(
@@ -669,7 +688,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             headers=cfg["headers"],
         )
 
-    if args.command == "http-flow":
+    # Handle http-flow ------------------------------------------------------
+    elif args.command == "http-flow":
         try:
             flow = load_flow(args.flow)
         except FileNotFoundError as e:
@@ -692,14 +712,58 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             print(line)
 
+        # DRY RUN: just show what *would* happen
         if args.dry_run:
             print(_color("[CATE] DRY RUN — not executing flow (v0.3.0).", _FG_MAGENTA))
             return 0
 
-        # v0.3.0: Just a preview implementation.
-        print(_color("[CATE] Flow execution is not yet implemented (v0.3.0).", _FG_YELLOW))
-        print(_color("       Next step: hook this into an HTTP session runner.", _FG_YELLOW))
-        return 1
+        # REAL EXECUTION: run the flow with a shared HTTP client
+        print(
+            _color(
+                "[CATE] Executing flow (v0.3.0 stateful HTTP run)…",
+                _FG_CYAN,
+            )
+        )
+
+        results = run_flow(
+            flow,
+            timeout=args.timeout if hasattr(args, "timeout") else 10.0,
+            max_rps=args.max_rps if hasattr(args, "max_rps") else 2.0,
+        )
+
+        print("\n[CATE] Flow results:")
+        failures = 0
+        for r in results:
+            status_label = "OK" if r["ok"] else "FAIL"
+            color = _FG_GREEN if r["ok"] else _FG_RED
+            status = r["status_code"] if r["status_code"] is not None else "ERR"
+            line = (
+                f"{r['step']}: {r['method']} {r['url']} → "
+                f"status={status}, {r['elapsed_ms']:.1f} ms, {r['bytes']} bytes"
+            )
+            if r["error"]:
+                line += f" — {r['error']}"
+            print(_color(f"[{status_label}] {line}", color))
+            if not r["ok"]:
+                failures += 1
+
+        if failures:
+            print(
+                _color(
+                    f"[CATE] Flow completed with {failures} failing step(s).",
+                    _FG_RED,
+                )
+            )
+            return 1
+
+        print(_color("[CATE] Flow completed successfully.", _FG_GREEN))
+        return 0
+
+    # Fallback --------------------------------------------------------------
+    parser.error("Unknown command")
+    return 1
+
+
 
     parser.error("Unknown command")
     return 1
