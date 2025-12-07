@@ -1,0 +1,16 @@
+[flows.delphonix-login-sequence]
+description = "Login as admin, then fetch dashboard."
+
+# Step order
+steps = ["login", "dashboard"]
+
+[flows.delphonix-login-sequence.login]
+method = "POST"
+url = "https://delphonix.com/login.php"
+body_template = "user=admin&pass={password}"
+capture_cookies = true
+
+[flows.delphonix-login-sequence.dashboard]
+method = "GET"
+url = "https://delphonix.com/dashboard"
+expect_status = 200
