@@ -11,6 +11,9 @@ from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 
+from statistics import mean
+from datetime import datetime
+
 import sys
 
 # Simple ANSI color helpers
@@ -217,6 +220,214 @@ def summarize_results(results) -> None:
                 f"{len(payloads)} payload(s): {payloads}"
             )
 
+def _percentile(values: List[float], pct: float) -> Optional[float]:
+    """
+    Simple percentile helper: pct in [0, 100].
+    Returns None if list is empty.
+    """
+    if not values:
+        return None
+    values_sorted = sorted(values)
+    if len(values_sorted) == 1:
+        return values_sorted[0]
+    k = (pct / 100.0) * (len(values_sorted) - 1)
+    i = int(k)
+    f = k - i
+    if i + 1 < len(values_sorted):
+        return values_sorted[i] + (values_sorted[i + 1] - values_sorted[i]) * f
+    return values_sorted[-1]
+
+
+def build_run_summary(results, config: JobConfig) -> Dict[str, Any]:
+    """
+    Build a machine-readable summary dict for a given run.
+    """
+    total = len(results)
+    error_count = 0
+    latencies: List[float] = []
+    status_counts: Dict[str, int] = {}
+    error_examples: List[Dict[str, Any]] = []
+
+    for r in results:
+        status = r.status_code
+        key = "none" if status is None else str(status)
+        status_counts[key] = status_counts.get(key, 0) + 1
+
+        if getattr(r, "error", None) or (status is not None and status >= 500):
+            error_count += 1
+            if len(error_examples) < 10:
+                error_examples.append(
+                    {
+                        "payload": r.payload,
+                        "status_code": status,
+                        "error": getattr(r, "error", None),
+                        "elapsed_ms": getattr(r, "elapsed_ms", None),
+                        "timestamp": getattr(r, "timestamp", None),
+                    }
+                )
+
+        elapsed = getattr(r, "elapsed_ms", None)
+        if isinstance(elapsed, (int, float)):
+            latencies.append(float(elapsed))
+
+    error_rate = (error_count / total) if total > 0 else 0.0
+
+    latency_stats: Dict[str, Optional[float]] = {}
+    if latencies:
+        latency_stats = {
+            "count": len(latencies),
+            "min_ms": min(latencies),
+            "max_ms": max(latencies),
+            "mean_ms": mean(latencies),
+            "p50_ms": _percentile(latencies, 50),
+            "p90_ms": _percentile(latencies, 90),
+            "p99_ms": _percentile(latencies, 99),
+        }
+
+    target = config.target
+    now = datetime.utcnow().isoformat() + "Z"
+
+    return {
+        "generated_at": now,
+        "target": {
+            "method": getattr(target, "method", None),
+            "url": getattr(target, "url", None),
+        },
+        "env": getattr(config, "env", getattr(config, "environment", None)),
+        "wordlist": str(getattr(config, "wordlist_path", "")),
+        "concurrency": config.concurrency,
+        "timeout_seconds": config.timeout_seconds,
+        "max_rps": config.max_rps,
+        "stop_on_error_rate": config.stop_on_error_rate,
+        "total_payloads": total,
+        "error_count": error_count,
+        "error_rate": error_rate,
+        "status_counts": status_counts,
+        "latency": latency_stats,
+        "error_examples": error_examples,
+    }
+
+
+def render_markdown_summary(summary: Dict[str, Any]) -> str:
+    """
+    Render a human-friendly Markdown report from the summary dict.
+    """
+    target = summary.get("target", {})
+    latency = summary.get("latency") or {}
+    status_counts = summary.get("status_counts", {})
+
+    lines: List[str] = []
+
+    lines.append("# CATE Run Summary")
+    lines.append("")
+    lines.append(f"_Generated_: `{summary.get('generated_at', '')}`")
+    lines.append("")
+
+    lines.append("## Target")
+    lines.append("")
+    lines.append(f"- **Method**: `{target.get('method')}`")
+    lines.append(f"- **URL**: `{target.get('url')}`")
+    lines.append(f"- **Env**: `{summary.get('env')}`")
+    lines.append(f"- **Wordlist**: `{summary.get('wordlist')}`")
+    lines.append(f"- **Concurrency**: `{summary.get('concurrency')}`")
+    lines.append(f"- **Timeout (s)**: `{summary.get('timeout_seconds')}`")
+    lines.append(f"- **max_rps**: `{summary.get('max_rps')}`")
+    lines.append(f"- **stop_on_error_rate**: `{summary.get('stop_on_error_rate')}`")
+    lines.append("")
+
+    lines.append("## Results")
+    lines.append("")
+    lines.append(f"- **Total payloads**: `{summary.get('total_payloads')}`")
+    lines.append(f"- **Error count**: `{summary.get('error_count')}`")
+    if summary.get("total_payloads"):
+        lines.append(f"- **Error rate**: `{summary.get('error_rate'):.3f}`")
+    else:
+        lines.append("- **Error rate**: `n/a`")
+    lines.append("")
+
+    lines.append("### Status codes")
+    lines.append("")
+    if status_counts:
+        lines.append("| Status | Count |")
+        lines.append("|--------|-------|")
+        for code, count in sorted(status_counts.items(), key=lambda kv: kv[0]):
+            lines.append(f"| `{code}` | `{count}` |")
+    else:
+        lines.append("_No responses recorded._")
+    lines.append("")
+
+    lines.append("### Latency (ms)")
+    lines.append("")
+    if latency:
+        lines.append("| Metric | Value |")
+        lines.append("|--------|-------|")
+        for key in ["count", "min_ms", "max_ms", "mean_ms", "p50_ms", "p90_ms", "p99_ms"]:
+            value = latency.get(key)
+            if value is None:
+                continue
+            lines.append(f"| `{key}` | `{value:.2f}` |")
+    else:
+        lines.append("_No latency data available._")
+    lines.append("")
+
+    errors = summary.get("error_examples") or []
+    lines.append("### Sample errors / anomalies")
+    lines.append("")
+    if not errors:
+        lines.append("_No error examples captured (nice!)._")
+    else:
+        for idx, err in enumerate(errors, 1):
+            lines.append(f"#### Error {idx}")
+            lines.append("")
+            lines.append(f"- **Payload**: `{err.get('payload')}`")
+            lines.append(f"- **Status**: `{err.get('status_code')}`")
+            lines.append(f"- **Elapsed ms**: `{err.get('elapsed_ms')}`")
+            lines.append(f"- **Error**: `{err.get('error')}`")
+            ts = err.get("timestamp")
+            if ts:
+                lines.append(f"- **Timestamp**: `{ts}`")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def write_run_summaries(
+    output_path: Path,
+    results,
+    config: JobConfig,
+) -> None:
+    """
+    Given the main JSONL output path, write:
+      - <name>.summary.json
+      - <name>.summary.md
+    """
+    summary = build_run_summary(results, config)
+
+    json_path = output_path.with_suffix(".summary.json")
+    md_path = output_path.with_suffix(".summary.md")
+
+    try:
+        import json
+
+        json_path.write_text(
+            json.dumps(summary, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # best-effort; don't kill the run
+        print(_color(f"[CATE] Failed to write JSON summary: {exc}", _FG_YELLOW))
+
+    try:
+        md_text = render_markdown_summary(summary)
+        md_path.write_text(md_text, encoding="utf-8")
+    except Exception as exc:
+        print(_color(f"[CATE] Failed to write Markdown summary: {exc}", _FG_YELLOW))
+
+    print(
+        _color(
+            f"[CATE] Summary written to {json_path} and {md_path}",
+            _FG_GREEN,
+        )
+    )
 
 def build_effective_config(args) -> Dict[str, Any]:
     """
@@ -377,8 +588,11 @@ def run_http_fuzz(
 
     async def _run() -> int:
         results = await run_job(config)
+
+        output_path: Optional[Path] = None
         if output:
-            write_results_jsonl(Path(output), results)
+            output_path = Path(output)
+            write_results_jsonl(output_path, results)
 
         total = len(results)
         errors = sum(
@@ -401,11 +615,13 @@ def run_http_fuzz(
                 )
             )
 
-        if output:
-            print(_color(f"[CATE] Results written to {output}", _FG_GREEN))
+        if output_path is not None:
+            print(_color(f"[CATE] Results written to {output_path}", _FG_GREEN))
+            write_run_summaries(output_path, results, config)
 
         summarize_results(results)
         return 0
+
 
     return asyncio.run(_run())
 
