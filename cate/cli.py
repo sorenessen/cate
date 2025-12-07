@@ -11,8 +11,13 @@ from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 
+# Summary Logging Imports
 from statistics import mean
 from datetime import datetime
+
+# Import Flow Loaders
+from .profiles import load_profile, ProfileNotFound
+from .flows import load_flow, FlowNotFound
 
 import sys
 
@@ -173,6 +178,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show what would be executed, but do not send any HTTP requests.",
     )
 
+    flow_parser = subparsers.add_parser(
+        "http-flow",
+        help="Run a multi-step HTTP flow (stateful sequence).",
+    )
+    flow_parser.add_argument(
+        "--flow",
+        required=True,
+        help="Name of the flow to run (from flows.toml), e.g. 'delphonix-login-sequence'.",
+    )
+    flow_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the planned flow steps, but do not send any HTTP requests.",
+    )
 
     return parser
 
@@ -650,8 +669,41 @@ def main(argv: Optional[List[str]] = None) -> int:
             headers=cfg["headers"],
         )
 
+    if args.command == "http-flow":
+        try:
+            flow = load_flow(args.flow)
+        except FileNotFoundError as e:
+            print(_color(f"[CATE] {e}", _FG_RED))
+            return 1
+        except FlowNotFound as e:
+            print(_color(f"[CATE] {e}", _FG_RED))
+            return 1
+
+        print(_color(f"[CATE] Loaded flow '{flow.name}'", _FG_CYAN))
+        if flow.description:
+            print(_color(f"[CATE] Description: {flow.description}", _FG_CYAN))
+
+        print(_color("[CATE] Steps:", _FG_CYAN))
+        for idx, step in enumerate(flow.steps, 1):
+            line = (
+                f"  {idx}. {step.name} -> {step.method} {step.url} "
+                f"(capture_cookies={step.capture_cookies}, "
+                f"expect_status={step.expect_status})"
+            )
+            print(line)
+
+        if args.dry_run:
+            print(_color("[CATE] DRY RUN — not executing flow (v0.3.0).", _FG_MAGENTA))
+            return 0
+
+        # v0.3.0: Just a preview implementation.
+        print(_color("[CATE] Flow execution is not yet implemented (v0.3.0).", _FG_YELLOW))
+        print(_color("       Next step: hook this into an HTTP session runner.", _FG_YELLOW))
+        return 1
+
     parser.error("Unknown command")
     return 1
+
 
 
 if __name__ == "__main__":
