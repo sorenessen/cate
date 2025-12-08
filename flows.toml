@@ -1,8 +1,8 @@
 [flows.delphonix-login-sequence]
-description = "Login as admin, then fetch dashboard."
+description = "Login as admin, then fetch about page."
 
 # Step order
-steps = ["login", "dashboard"]
+steps = ["login", "about"]
 
 [flows.delphonix-login-sequence.login]
 method = "POST"
@@ -10,7 +10,10 @@ url = "https://delphonix.com/login.php"
 body_template = "user=admin&pass={password}"
 capture_cookies = true
 
-[flows.delphonix-login-sequence.dashboard]
+[flows.delphonix-login-sequence.about]
 method = "GET"
-url = "https://delphonix.com/dashboard"
+url = "https://delphonix.com/about.html"
 expect_status = 200
+max_latency_ms = 500.0         	# TEST: or 1000.0
+body_must_contain = "About"	# TEST: proves the page loaded
+# body_must_not_contain = "Dashboard" # TEST: not forbidden
