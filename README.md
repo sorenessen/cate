@@ -314,7 +314,7 @@ method = "GET"
 url = "https://delphonix.com/about.html?marker={marker}&step=echo"
 expect_status = 200
 ```
-📌 Example Run (3-Step Variable Flow)
+### Example Run (3-Step Variable Flow)
 Below is a real execution of the variable-enabled flow:
 ```
 python -m cate.cli http-flow \
@@ -349,7 +349,8 @@ Produces console output:
 [CATE] Flow completed successfully.
 ```
 And the generated Markdown report (delphonix-flow-vars.summary.md) looks like:
-# ✅ Flow Passed
+
+✅ Flow Passed
 
 ## Overview
 
