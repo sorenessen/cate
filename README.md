@@ -233,7 +233,8 @@ python -m cate.cli http-flow \
 --flow delphonix-login-sequence \
 Dry-run (preview only, no HTTP requests):
 
-```python -m cate.cli http-flow \
+```
+python -m cate.cli http-flow \
   --flow delphonix-login-sequence \
   --dry-run
 ```
