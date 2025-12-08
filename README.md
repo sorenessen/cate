@@ -218,14 +218,13 @@ method = "GET"
 url = "https://delphonix.com/about.html"
 expect_status = 200
 ```
-## Optional assertions (v0.3.0)
-#### max_latency_ms       – fail if latency is higher than this
+### Optional assertions (v0.3.0)
 
-#### body_must_contain    – fail if response body does NOT contain this string
-```
-max_latency_ms = 10.0 
+You can add per-step assertions inside each flow step:
 
-body_must_contain = "about"
+```toml
+max_latency_ms = 10.0         # Fail if latency > 10 ms  
+body_must_contain = "about"   # Fail if response body does NOT contain this
 ```
 
 ## Running a flow
