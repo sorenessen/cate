@@ -223,10 +223,10 @@ expect_status = 200
 
 `body_must_contain`    – fail if response body does NOT contain this string
 
-```max_latency_ms = 10.0 
+max_latency_ms = 10.0 
 
 body_must_contain = "about"
-```
+
 ## Running a flow
 Use the http-flow subcommand and the flow name from flows.toml:
 
