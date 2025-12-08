@@ -221,6 +221,11 @@ def build_parser() -> argparse.ArgumentParser:
             "If set, writes <prefix>.jsonl and <prefix>.summary.md"
         ),
     )
+    flow_parser.add_argument(
+        "--stop-on-fail",
+        action="store_true",
+        help="Stop executing further steps after the first failing step.",
+    )
 
     return parser
 
@@ -785,9 +790,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             print(line)
 
-        # DRY RUN: just show what *would* happen
+        # DRY RUN: just show what *would* happen (allowed even for prod)
         if args.dry_run:
-            print(_color("[CATE] DRY RUN — not executing flow (v0.3.0).", _FG_MAGENTA))
+            print(
+                _color(
+                    f"[CATE] DRY RUN — not executing flow (v0.3.0 stateful HTTP run) "
+                    f"in env={args.env} (timeout={args.timeout}s, max_rps={args.max_rps})",
+                    _FG_MAGENTA,
+                )
+            )
             return 0
 
         # Safety: prevent accidental prod without explicit opt-in
@@ -809,11 +820,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         )
 
+        # NOTE: current run_flow signature doesn't take env
         results = run_flow(
-            flow,
+            flow=flow,
             timeout=args.timeout,
             max_rps=args.max_rps,
         )
+
 
         print("\n[CATE] Flow results:")
         failures = 0
@@ -852,16 +865,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(_color("[CATE] Flow completed successfully.", _FG_GREEN))
         return 0
 
-
     # Fallback --------------------------------------------------------------
     parser.error("Unknown command")
     return 1
-
-
-
-    parser.error("Unknown command")
-    return 1
-
 
 
 if __name__ == "__main__":
