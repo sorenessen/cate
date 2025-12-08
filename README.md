@@ -33,13 +33,12 @@ This is v0.1, intentionally simple, fast, and local-first.
 
 Inject `{payload}` into URLs:
 
-```
+```text
 https://example.com/?q={payload}
 ```
-
 Use body templates for POST:
 
-```
+```text
 user=admin&pass={payload}
 ```
 
@@ -48,7 +47,12 @@ user=admin&pass={payload}
 ### Custom headers
 
 ```bash
-python -m cate.cli http-fuzz   --url "https://example.com/api"   --method GET   --header "Authorization: Bearer TOKEN"   --header "X-Test: 123"   --wordlist ./wordlist.txt
+python -m cate.cli http-fuzz \
+  --url "https://example.com/api" \
+  --method GET \
+  --header "Authorization: Bearer TOKEN" \
+  --header "X-Test: 123" \
+  --wordlist ./wordlist.txt
 ```
 
 ---
@@ -82,7 +86,9 @@ env = "dev"
 Run the profile:
 
 ```bash
-python -m cate.cli http-fuzz   --profile delphonix-login-dev   --output ./logs/delph-login.jsonl
+python -m cate.cli http-fuzz \
+  --profile delphonix-login-dev \
+  --output ./logs/delph-login.jsonl
 ```
 
 ---
@@ -108,22 +114,30 @@ This can be consumed by Elastic, Splunk, Datadog, Loki, pandas, etc.
 
 ## Logging and reports (v0.2)
 
-When you pass `--output`, CATE writes a structured JSONL log for every payload, and also generates two summary artifacts:
+When you pass `--output`, CATE writes a structured JSONL log for every payload, and also generates two summary artifacts next to it:
 
-- `run.jsonl` – raw results  
-- `run.summary.json` – machine-readable rollup  
-- `run.summary.md` – human-friendly Markdown report  
+- `run.jsonl` – one JSON object per payload (raw results, same as before)
+- `run.summary.json` – machine-readable rollup (totals, error rate, latency stats, status counts, sample errors)
+- `run.summary.md` – human-friendly Markdown report that renders nicely in GitHub, VS Code, or any Markdown viewer
 
 ### Example
 
 ```bash
-python -m cate.cli http-fuzz   --profile delphonix-login-dev   --output ./logs/delphonix-login.jsonl
+python -m cate.cli http-fuzz \
+  --profile delphonix-login-dev \
+  --output ./logs/delphonix-login.jsonl
 ```
+This will create:
 
-Example `*.summary.json` excerpt:
+`logs/delphonix-login.jsonl`
 
-```json
-{
+`logs/delphonix-login.summary.json`
+
+`logs/delphonix-login.summary.md`
+
+A trimmed example of `*.summary.json:`
+
+```{
   "generated_at": "2025-12-07T02:03:36.782954Z",
   "target": {
     "method": "POST",
@@ -140,17 +154,53 @@ Example `*.summary.json` excerpt:
   "error_rate": 0.0,
   "status_counts": {
     "200": 4
-  }
+  },
+  "latency": {
+    "count": 4,
+    "min_ms": 100.43,
+    "max_ms": 930.23,
+    "mean_ms": 350.12,
+    "p50_ms": 210.77,
+    "p90_ms": 880.54,
+    "p99_ms": 925.00
+  },
+  "error_examples": []
 }
 ```
+
+
+#### And the corresponding `*.summary.md` includes:
+
+* Target details (method, URL, env, wordlist, rate limits)
+
+* Totals and error rate
+
+* Status code table
+
+* Latency table (min / max / mean / p50 / p90 / p99)
+
+* A list of sample error or anomaly payloads (when any exist)
+
+---
 
 ---
 
 ## Stateful flows (v0.3)
 
-CATE can run **multi-step stateful HTTP flows** using `flows.toml`.
+CATE can run **multi-step, stateful HTTP flows** using a simple `flows.toml` file and the `http-flow` subcommand.
 
-Example:
+This lets you model things like “log in, then hit a dashboard/about page” with shared cookies and per-step assertions.
+
+### Flow definitions (`flows.toml`)
+
+Flows live in a top-level `[flows]` table.  
+Each flow has:
+
+- a `description`
+- an ordered list of step names in `steps = [...]`
+- one child table per step with HTTP config and optional assertions
+
+Example (simplified version of the current Delphonix flow):
 
 ```toml
 [flows.delphonix-login-sequence]
@@ -168,61 +218,104 @@ method = "GET"
 url = "https://delphonix.com/about.html"
 expect_status = 200
 ```
+### Optional assertions (v0.3.0)
 
-### Optional assertions
+You can add per-step assertions inside each flow step:
 
 ```toml
-max_latency_ms = 10.0
-body_must_contain = "about"
+max_latency_ms = 10.0         # Fail if latency > 10 ms  
+body_must_contain = "about"   # Fail if response body does NOT contain this
 ```
-
----
 
 ## Running a flow
+Use the http-flow subcommand and the flow name from flows.toml: \
+python -m cate.cli http-flow \
+--flow delphonix-login-sequence \
+Dry-run (preview only, no HTTP requests):
 
-Dry run:
+```
+python -m cate.cli http-flow \
+  --flow delphonix-login-sequence \
+  --dry-run
+```
+You’ll see a summary like:
+```
+[CATE] Loaded flow 'delphonix-login-sequence'
+[CATE] Description: Login as admin, then fetch about page.
+[CATE] Steps:
+  1. login -> POST https://delphonix.com/login.php (capture_cookies=True, expect_status=None)
+  2. about -> GET https://delphonix.com/about.html (capture_cookies=False, expect_status=200)
+[CATE] Executing flow (v0.3.0 stateful HTTP run) in env=dev (timeout=10.0s, max_rps=2.0)…
+...
+```
+Flow logs & Markdown reports
+Like http-fuzz, flows can write structured logs and a pretty Markdown summary.
+
+```markdown
+### Flow logs & Markdown reports
+
+Like `http-fuzz`, flows can write structured logs and a pretty Markdown summary:
 
 ```bash
-python -m cate.cli http-flow   --flow delphonix-login-sequence   --dry-run
+python -m cate.cli http-flow \
+  --flow delphonix-login-sequence \
+  --output logs/delphonix-flow
 ```
+This produces:
 
-Run with output:
+`logs/delphonix-flow.jsonl` – one JSON object per step
 
-```bash
-python -m cate.cli http-flow   --flow delphonix-login-sequence   --output logs/delphonix-flow
-```
+`logs/delphonix-flow.summary.md` – human-readable Markdown report
 
-Produces:
+Example summary:
 
-- `logs/delphonix-flow.jsonl`
-- `logs/delphonix-flow.summary.md`
+markdown
+
+# ✅ Flow Passed
+
+## Overview
+
+| Metric | Value      |
+|--------|------------|
+| Steps  | 2          |
+| Failures | 0        |
+| Avg latency | 259.79 ms |
+
+## All Steps
+
+| Step   | Method | URL                                   | Status | OK  | Latency (ms) | Bytes | Error |
+|--------|--------|----------------------------------------|--------|-----|-------------:|------:|-------|
+| login  | POST   | https://delphonix.com/login.php       | 200    | ✅  | 421.0        | 2512  |       |
+| about  | GET    | https://delphonix.com/about.html      | 200    | ✅  |  98.6        | 19298 |       |
+
+_Report generated by **CATE v0.3 — Calypso Automated Testing Engine**_
 
 ---
 
 ## Safety flags
 
-| Flag | Description |
-|------|-------------|
-| `--env` | Environment label |
-| `--i-understand-prod` | Required for prod testing |
-| `--max-rps` | Limits request rate |
-| `--stop-on-error-rate` | Auto-shutdown on high errors |
+| Flag                  | Description                                       |
+|----------------------|---------------------------------------------------|
+| `--env dev`          | Environment selection                              |
+| `--i-understand-prod`| Required to run against prod                       |
+| `--max-rps`          | Requests-per-second governor                        |
+| `--stop-on-error-rate` | Auto-shutdown on high error rate                 |
 
 ---
 
 ## Project structure
 
-```
+```text
 cate/
-  cli.py
-  engine.py
-  models.py
-  logging_utils.py
-  profiles.py
-  flows.py
-profiles.toml
-flows.toml
-logs/
+  cli.py            # CLI + profiles integration
+  engine.py         # Async workers, RPS governor
+  models.py         # Target, JobConfig, Result models
+  logging_utils.py  # JSONL logging
+  profiles.py       # TOML profile loader
+  tests/
+    test_wordlist.txt
+profiles.toml        # Profile definitions
+logs/                # JSONL outputs
 ```
 
 ---
@@ -230,10 +323,10 @@ logs/
 ## Roadmap
 
 ### v0.2  
-Richer logging, histograms, HTML/MD reports.
+Richer logging, timing histograms, HTML/Markdown reports.
 
 ### v0.3  
-Stateful flows, cookie/session support.
+Stateful flows (login → action → logout), cookie/session support.
 
 ### v0.4  
 Distributed workers, queues, dashboard.
