@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import asyncio
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import asyncio
+import re
+import time
 
 import httpx
 import tomllib
@@ -22,14 +24,18 @@ class FlowStep:
     url: str
     body_template: Optional[str] = None
     capture_cookies: bool = False
-
-    # Basic status assertion (already existed)
     expect_status: Optional[int] = None
 
-    # NEW: lightweight per-step assertions
-    max_latency_ms: Optional[float] = None          # e.g. 500.0
-    body_must_contain: Optional[str] = None         # e.g. "Dashboard"
-    body_must_not_contain: Optional[str] = None     # e.g. "Traceback"
+    # Assertions (v0.3)
+    max_latency_ms: Optional[float] = None
+    body_must_contain: Optional[str] = None
+    body_must_not_contain: Optional[str] = None
+    stop_on_fail: bool = False
+
+    # Variables / extractors (v0.3.1)
+    extract_regex: Optional[str] = None
+    store_as: Optional[str] = None
+    require_extracted: bool = False
 
 
 @dataclass
@@ -37,17 +43,6 @@ class Flow:
     name: str
     description: str
     steps: List[FlowStep]
-    stop_on_fail: bool = False    # Aborts flow when a step fails
-
-
-@dataclass
-class FlowStepResult:
-    step: FlowStep
-    status_code: int | None
-    latency_ms: float
-    bytes: int | None
-    ok: bool
-    error: str | None = None
 
 
 def load_flows(path: Path | None = None) -> Dict[str, Flow]:
@@ -70,10 +65,6 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
         method = "GET"
         url = "https://example.com/dashboard"
         expect_status = 200
-        max_latency_ms = 500.0
-        body_must_contain = "Dashboard"
-        body_must_not_contain = "Traceback"
-
     """
     if path is None:
         path = Path("flows.toml")
@@ -124,20 +115,22 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 capture_cookies=bool(raw.get("capture_cookies", False)),
                 expect_status=raw.get("expect_status"),
 
-                # NEW: optional assertion fields
                 max_latency_ms=raw.get("max_latency_ms"),
                 body_must_contain=raw.get("body_must_contain"),
                 body_must_not_contain=raw.get("body_must_not_contain"),
+                stop_on_fail=bool(raw.get("stop_on_fail", False)),
+
+                extract_regex=raw.get("extract_regex"),
+                store_as=raw.get("store_as"),
+                require_extracted=bool(raw.get("require_extracted", False)),
             )
             steps.append(step)
-
 
         if steps:
             flows[flow_name] = Flow(
                 name=flow_name,
                 description=description,
                 steps=steps,
-                stop_on_fail=bool(cfg.get("stop_on_fail", False)),
             )
 
     return flows
@@ -150,101 +143,148 @@ def load_flow(name: str, path: Path | None = None) -> Flow:
     return flows[name]
 
 
-# ---------------------------------------------------------------------------
-# v0.3: Flow execution helpers
-# ---------------------------------------------------------------------------
-
-async def run_flow_async(
+async def _run_flow_async(
     flow: Flow,
-    *,
     timeout: float = 10.0,
     max_rps: float = 2.0,
 ) -> List[Dict[str, Any]]:
     """
-    Execute a Flow step-by-step with a shared HTTP client (cookies are
-    automatically carried across requests by httpx).
+    Execute a Flow with a shared cookie jar and simple variable store.
 
-    Returns a list of dicts with per-step results:
+    Returns a list of dicts, one per step, shaped roughly like:
 
         {
             "step": "login",
             "method": "POST",
-            "url": "https://…",
+            "url": "https://delphonix.com/login.php",
             "status_code": 200,
-            "ok": True/False,
-            "elapsed_ms": 123.4,
-            "bytes": 1024,
-            "error": None or str,
+            "ok": True,
+            "elapsed_ms": 347.2,
+            "bytes": 2512,
+            "error": None,
+            "assertions": {
+                "status_ok": True,
+                "latency_ok": True,
+                "body_contains_ok": True,
+                "body_not_contains_ok": True,
+                "extracted_ok": True,
+            },
+            "extracted_var": "marker",
+            "extracted_value": "About",
         }
     """
+    state: Dict[str, Any] = {"cookies": httpx.Cookies(), "vars": {}}
     results: List[Dict[str, Any]] = []
 
-    timeout_cfg = httpx.Timeout(timeout)
-    async with httpx.AsyncClient(timeout=timeout_cfg, follow_redirects=True) as client:
-        last_start: Optional[float] = None
+    async with httpx.AsyncClient(timeout=timeout, cookies=state["cookies"]) as client:
+        last_start = 0.0
 
         for step in flow.steps:
-            method = step.method.upper()
-            url = step.url
-
-            # Simple global RPS throttle between steps
-            if last_start is not None and max_rps > 0:
+            # RPS governor
+            if max_rps > 0 and last_start > 0:
                 min_interval = 1.0 / max_rps
-                elapsed = time.perf_counter() - last_start
-                sleep_for = min_interval - elapsed
-                if sleep_for > 0:
-                    await asyncio.sleep(sleep_for)
+                now = time.perf_counter()
+                delta = now - last_start
+                if delta < min_interval:
+                    await asyncio.sleep(min_interval - delta)
 
-            # v0.3.1: no per-step fuzz payload yet; use body_template as-is
-            data: Optional[str] = step.body_template
+            method = step.method
+            url_template = step.url
+            body_template = step.body_template
+
+            # Variable interpolation helper
+            def interpolate(template: Optional[str]) -> Optional[str]:
+                if template is None:
+                    return None
+                try:
+                    return template.format(**state["vars"])
+                except KeyError:
+                    # Missing vars – just return the raw template
+                    return template
+
+            url = interpolate(url_template) or url_template
+            data = interpolate(body_template)
 
             started = time.perf_counter()
             try:
                 resp = await client.request(method, url, data=data)
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 status = resp.status_code
-                size = len(resp.content) if resp.content is not None else 0
+                size = len(resp.content)
+                body_text: Optional[str] = None  # lazy
 
-                # --- assertion engine for this step ---
-                assertion_errors: list[str] = []
+                ok = True
+                error_msg_parts: List[str] = []
+                assertions: Dict[str, bool] = {}
 
-                # 1) Status code
-                if step.expect_status is not None and status != step.expect_status:
-                    assertion_errors.append(
-                        f"expected status {step.expect_status}, got {status}"
-                    )
+                # Status assertion
+                if step.expect_status is not None:
+                    if status == step.expect_status:
+                        assertions["status_ok"] = True
+                    else:
+                        assertions["status_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            f"expected status {step.expect_status}, got {status}"
+                        )
 
-                # 2) Latency
-                if step.max_latency_ms is not None and elapsed_ms > step.max_latency_ms:
-                    assertion_errors.append(
-                        f"latency {elapsed_ms:.1f} ms > max {step.max_latency_ms:.1f} ms"
-                    )
+                # Latency assertion
+                if step.max_latency_ms is not None:
+                    if elapsed_ms <= step.max_latency_ms:
+                        assertions["latency_ok"] = True
+                    else:
+                        assertions["latency_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            f"latency {elapsed_ms:.1f} ms > max {step.max_latency_ms:.1f} ms"
+                        )
 
-                # 3) Body text checks
-                text = ""
-                try:
-                    text = resp.text or ""
-                except Exception:
-                    # if decode fails, treat as empty for body checks
-                    text = ""
+                # Body content assertions (load body lazily)
+                if step.body_must_contain is not None or step.body_must_not_contain is not None:
+                    body_text = resp.text
 
-                if step.body_must_contain:
-                    if step.body_must_contain not in text:
-                        assertion_errors.append(
+                if step.body_must_contain is not None:
+                    if step.body_must_contain in (body_text or ""):
+                        assertions["body_contains_ok"] = True
+                    else:
+                        assertions["body_contains_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
                             f"body does not contain {step.body_must_contain!r}"
                         )
 
-                if step.body_must_not_contain:
-                    if step.body_must_not_contain in text:
-                        assertion_errors.append(
-                            f"body contains forbidden substring {step.body_must_not_contain!r}"
+                if step.body_must_not_contain is not None:
+                    if step.body_must_not_contain in (body_text or ""):
+                        assertions["body_not_contains_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            f"body contains forbidden {step.body_must_not_contain!r}"
                         )
+                    else:
+                        assertions["body_not_contains_ok"] = True
 
-                ok = not assertion_errors
-                error_msg: Optional[str] = (
-                    "; ".join(assertion_errors) if assertion_errors else None
-                )
-                # --- end assertion engine ---
+                # Extractor / variable assertion
+                extracted_var = None
+                extracted_value = None
+                if step.extract_regex and step.store_as:
+                    if body_text is None:
+                        body_text = resp.text
+                    m = re.search(step.extract_regex, body_text, flags=re.DOTALL)
+                    if m:
+                        # use first capturing group if present, else the whole match
+                        extracted_value = m.group(1) if m.groups() else m.group(0)
+                        extracted_var = step.store_as
+                        state["vars"][step.store_as] = extracted_value
+                        assertions["extracted_ok"] = True
+                    else:
+                        assertions["extracted_ok"] = False
+                        if step.require_extracted:
+                            ok = False
+                            error_msg_parts.append(
+                                f"failed to extract '{step.store_as}' with regex {step.extract_regex!r}"
+                            )
+
+                error_msg = "; ".join(error_msg_parts) if error_msg_parts else None
 
                 results.append(
                     {
@@ -256,17 +296,11 @@ async def run_flow_async(
                         "elapsed_ms": round(elapsed_ms, 2),
                         "bytes": size,
                         "error": error_msg,
+                        "assertions": assertions,
+                        "extracted_var": extracted_var,
+                        "extracted_value": extracted_value,
                     }
                 )
-
-                if not ok and flow.stop_on_fail:
-                    print(
-                        _color(
-                            f"[CATE] stop_on_fail=true — aborting flow after failing step '{step.name}'.",
-                            _FG_YELLOW,
-                        )
-                    )
-                    break
 
             except Exception as exc:
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
@@ -279,34 +313,28 @@ async def run_flow_async(
                         "ok": False,
                         "elapsed_ms": round(elapsed_ms, 2),
                         "bytes": 0,
-                        "error": f"request error: {exc}",
+                        "error": str(exc),
+                        "assertions": {},
+                        "extracted_var": None,
+                        "extracted_value": None,
                     }
                 )
 
-                if flow.stop_on_fail:
-                    print(
-                        _color(
-                            f"[CATE] stop_on_fail=true — aborting flow after exception in step '{step.name}'.",
-                            _FG_YELLOW,
-                        )
-                    )
-                    break
-
-            # httpx client keeps cookies internally; we just track timing
             last_start = time.perf_counter()
+
+            # Early stop if this step failed and stop_on_fail is set
+            if not results[-1]["ok"] and step.stop_on_fail:
+                break
 
     return results
 
 
 def run_flow(
     flow: Flow,
-    *,
     timeout: float = 10.0,
     max_rps: float = 2.0,
 ) -> List[Dict[str, Any]]:
     """
-    Synchronous helper so callers (e.g. cli.py) can just do:
-
-        results = run_flow(flow, timeout=10.0, max_rps=2.0)
+    Synchronous wrapper around _run_flow_async.
     """
-    return asyncio.run(run_flow_async(flow, timeout=timeout, max_rps=max_rps))
+    return asyncio.run(_run_flow_async(flow, timeout=timeout, max_rps=max_rps))
