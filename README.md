@@ -251,7 +251,13 @@ You’ll see a summary like:
 Flow logs & Markdown reports
 Like http-fuzz, flows can write structured logs and a pretty Markdown summary.
 
-```python -m cate.cli http-flow \
+```markdown
+### Flow logs & Markdown reports
+
+Like `http-fuzz`, flows can write structured logs and a pretty Markdown summary:
+
+```bash
+python -m cate.cli http-flow \
   --flow delphonix-login-sequence \
   --output logs/delphonix-flow
 ```
