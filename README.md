@@ -218,11 +218,12 @@ method = "GET"
 url = "https://delphonix.com/about.html"
 expect_status = 200
 ```
-# Optional assertions (v0.3.0)
-# max_latency_ms       – fail if latency is higher than this
-# body_must_contain    – fail if response body does NOT contain this string
-max_latency_ms = 10.0
+## Optional assertions (v0.3.0)
+# `max_latency_ms`       – fail if latency is higher than this
+# `body_must_contain`    – fail if response body does NOT contain this string
+```max_latency_ms = 10.0 
 body_must_contain = "about"
+```
 Running a flow
 Use the http-flow subcommand and the flow name from flows.toml:
 
