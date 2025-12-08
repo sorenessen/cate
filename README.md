@@ -315,13 +315,13 @@ url = "https://delphonix.com/about.html?marker={marker}&step=echo"
 expect_status = 200
 ```
 ### Example Run (3-Step Variable Flow)
-Below is a real execution of the variable-enabled flow:
+#### Below is a real execution of the variable-enabled flow:
 ```
 python -m cate.cli http-flow \
   --flow delphonix-login-sequence-vars \
   --output logs/delphonix-flow-vars
 ```
-Produces console output:
+#### Produces console output:
 ```
 [CATE] Loaded flow 'delphonix-login-sequence-vars'
 [CATE] Description: Login as admin, then fetch about page (with variable extraction demo).
@@ -348,7 +348,7 @@ Produces console output:
 
 [CATE] Flow completed successfully.
 ```
-And the generated Markdown report (delphonix-flow-vars.summary.md) looks like:
+#### And the generated Markdown report (delphonix-flow-vars.summary.md) looks like:
 
 ✅ Flow Passed
 
