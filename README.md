@@ -228,9 +228,9 @@ max_latency_ms = 10.0
 body_must_contain = "about"
 
 ## Running a flow
-Use the http-flow subcommand and the flow name from flows.toml:
-`python -m cate.cli http-flow \
-  --flow delphonix-login-sequence
+Use the http-flow subcommand and the flow name from flows.toml: \
+python -m cate.cli http-flow \
+--flow delphonix-login-sequence \
 Dry-run (preview only, no HTTP requests):
 
 ```python -m cate.cli http-flow \
