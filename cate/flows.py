@@ -37,6 +37,7 @@ class Flow:
     name: str
     description: str
     steps: List[FlowStep]
+    stop_on_fail: bool = False    # Aborts flow when a step fails
 
 
 @dataclass
@@ -136,6 +137,7 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 name=flow_name,
                 description=description,
                 steps=steps,
+                stop_on_fail=bool(cfg.get("stop_on_fail", False)),
             )
 
     return flows
@@ -256,6 +258,16 @@ async def run_flow_async(
                         "error": error_msg,
                     }
                 )
+
+                if not ok and flow.stop_on_fail:
+                    print(
+                        _color(
+                            f"[CATE] stop_on_fail=true — aborting flow after failing step '{step.name}'.",
+                            _FG_YELLOW,
+                        )
+                    )
+                    break
+
             except Exception as exc:
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 results.append(
@@ -271,6 +283,14 @@ async def run_flow_async(
                     }
                 )
 
+                if flow.stop_on_fail:
+                    print(
+                        _color(
+                            f"[CATE] stop_on_fail=true — aborting flow after exception in step '{step.name}'.",
+                            _FG_YELLOW,
+                        )
+                    )
+                    break
 
             # httpx client keeps cookies internally; we just track timing
             last_start = time.perf_counter()

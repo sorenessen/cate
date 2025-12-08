@@ -9,6 +9,7 @@ method = "POST"
 url = "https://delphonix.com/login.php"
 body_template = "user=admin&pass={password}"
 capture_cookies = true
+stop_on_fail = false
 
 [flows.delphonix-login-sequence.about]
 method = "GET"
