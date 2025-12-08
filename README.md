@@ -205,8 +205,8 @@ expect_status = 200
 ### Optional flow assertions
 
 ```toml
-max_latency_ms = 10.0
-body_must_contain = "about"
+max_latency_ms = 10.0              - Fails if greater than 10.0
+body_must_contain = "about"        - Fails if value is absent
 ```
 
 ---
