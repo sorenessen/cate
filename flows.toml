@@ -15,6 +15,38 @@ stop_on_fail = false
 method = "GET"
 url = "https://delphonix.com/about.html"
 expect_status = 200
-max_latency_ms = 500.0         	# TEST: or 1000.0
-body_must_contain = "About"	# TEST: proves the page loaded
+max_latency_ms = 500.0          # TEST: or 1000.0
+body_must_contain = "About"     # TEST: proves the page loaded
 # body_must_not_contain = "Dashboard" # TEST: not forbidden
+
+
+# ------------------------------------------------------------------
+# v0.3.1 demo: same flow, but with a simple extractor + variable
+# ------------------------------------------------------------------
+
+[flows.delphonix-login-sequence-vars]
+description = "Login as admin, then fetch about page (with variable extraction demo)."
+
+# Step order
+steps = ["login", "about"]
+
+[flows.delphonix-login-sequence-vars.login]
+method = "POST"
+url = "https://delphonix.com/login.php"
+body_template = "user=admin&pass={password}"
+capture_cookies = true
+stop_on_fail = false
+
+# Simple extractor: look for "About" in the response body and store it as {marker}
+# This is intentionally trivial, just to prove wiring
+extract_regex = "Login or Sign Up"
+store_as = "marker"
+require_extracted = true
+
+[flows.delphonix-login-sequence-vars.about]
+method = "GET"
+# The {marker} variable will be interpolated from the previous step if extracted
+url = "https://delphonix.com/about.html?m={marker}"
+expect_status = 200
+max_latency_ms = 500.0
+body_must_contain = "About"
