@@ -240,7 +240,7 @@ python -m cate.cli http-flow \
   --dry-run
 ```
 You’ll see a summary like:
-
+```
 [CATE] Loaded flow 'delphonix-login-sequence'
 [CATE] Description: Login as admin, then fetch about page.
 [CATE] Steps:
@@ -248,6 +248,7 @@ You’ll see a summary like:
   2. about -> GET https://delphonix.com/about.html (capture_cookies=False, expect_status=200)
 [CATE] Executing flow (v0.3.0 stateful HTTP run) in env=dev (timeout=10.0s, max_rps=2.0)…
 ...
+```
 Flow logs & Markdown reports
 Like http-fuzz, flows can write structured logs and a pretty Markdown summary.
 
