@@ -111,6 +111,7 @@ Each line contains one result:
 This can be consumed by Elastic, Splunk, Datadog, Loki, pandas, etc.
 
 ---
+
 ## Logging and reports (v0.2)
 
 When you pass `--output`, CATE writes a structured JSONL log for every payload, and also generates two summary artifacts next to it:
@@ -179,6 +180,47 @@ A trimmed example of `*.summary.json:`
 * Latency table (min / max / mean / p50 / p90 / p99)
 
 * A list of sample error or anomaly payloads (when any exist)
+
+---
+
+## Stateful flows (v0.3)
+
+CATE can run **multi-step, stateful HTTP flows** using a simple `flows.toml` file and the `http-flow` subcommand.
+
+This lets you model things like “log in, then hit a dashboard/about page” with shared cookies and per-step assertions.
+
+### Flow definitions (`flows.toml`)
+
+Flows live in a top-level `[flows]` table.  
+Each flow has:
+
+- a `description`
+- an ordered list of step names in `steps = [...]`
+- one child table per step with HTTP config and optional assertions
+
+Example (simplified version of the current Delphonix flow):
+
+```toml
+[flows.delphonix-login-sequence]
+description = "Login as admin, then fetch about page."
+steps = ["login", "about"]
+
+[flows.delphonix-login-sequence.login]
+method = "POST"
+url = "https://delphonix.com/login.php"
+body_template = "user=admin&pass={password}"
+capture_cookies = true
+
+[flows.delphonix-login-sequence.about]
+method = "GET"
+url = "https://delphonix.com/about.html"
+expect_status = 200
+
+# Optional assertions (v0.3.0)
+# max_latency_ms       – fail if latency is higher than this
+# body_must_contain    – fail if response body does NOT contain this string
+max_latency_ms = 10.0
+body_must_contain = "about"
 
 ---
 
