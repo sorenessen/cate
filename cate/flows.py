@@ -26,6 +26,8 @@ class FlowStep:
     capture_cookies: bool = False
     expect_status: Optional[int] = None
 
+    headers: Optional[Dict[str, str]] = None
+
     # Assertions (v0.3)
     max_latency_ms: Optional[float] = None
     body_must_contain: Optional[str] = None
@@ -107,6 +109,11 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
             if not url:
                 continue
 
+            raw_headers = raw.get("headers")
+            headers: Optional[Dict[str, str]] = None
+            if isinstance(raw_headers, dict):
+                headers = {str(k): str(v) for k, v in raw_headers.items()}
+
             step = FlowStep(
                 name=step_name,
                 method=method,
@@ -114,6 +121,7 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 body_template=raw.get("body_template"),
                 capture_cookies=bool(raw.get("capture_cookies", False)),
                 expect_status=raw.get("expect_status"),
+                headers=headers, 
 
                 max_latency_ms=raw.get("max_latency_ms"),
                 body_must_contain=raw.get("body_must_contain"),
@@ -205,9 +213,24 @@ async def _run_flow_async(
             url = interpolate(url_template) or url_template
             data = interpolate(body_template)
 
+            # per-step headers with interpolation
+            headers: Optional[Dict[str, str]] = None
+            if step.headers:
+                headers = {
+                    key: interpolate(value) or value
+                    for key, value in step.headers.items()
+                }
+
+
             started = time.perf_counter()
             try:
-                resp = await client.request(method, url, data=data)
+                resp = await client.request(
+                    method,
+                    url,
+                    data=data,
+                    headers=headers,
+                )
+
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 status = resp.status_code
                 size = len(resp.content)
@@ -299,6 +322,7 @@ async def _run_flow_async(
                         "assertions": assertions,
                         "extracted_var": extracted_var,
                         "extracted_value": extracted_value,
+                        "headers": headers or {},
                     }
                 )
 
@@ -317,6 +341,7 @@ async def _run_flow_async(
                         "assertions": {},
                         "extracted_var": None,
                         "extracted_value": None,
+                        "headers": headers or {},
                     }
                 )
 

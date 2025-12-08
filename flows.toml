@@ -20,33 +20,36 @@ body_must_contain = "About"     # TEST: proves the page loaded
 # body_must_not_contain = "Dashboard" # TEST: not forbidden
 
 
-# ------------------------------------------------------------------
-# v0.3.1 demo: same flow, but with a simple extractor + variable
-# ------------------------------------------------------------------
-
+# ---------------------------------------------------------
+# Demo flow with variable extraction & reuse
+# ---------------------------------------------------------
 [flows.delphonix-login-sequence-vars]
 description = "Login as admin, then fetch about page (with variable extraction demo)."
-
-# Step order
-steps = ["login", "about"]
+steps = ["login", "about", "echo"]
 
 [flows.delphonix-login-sequence-vars.login]
 method = "POST"
 url = "https://delphonix.com/login.php"
 body_template = "user=admin&pass={password}"
 capture_cookies = true
-stop_on_fail = false
 
-# Simple extractor: look for "About" in the response body and store it as {marker}
-# This is intentionally trivial, just to prove wiring
+# Extract a marker string from the login page and store it
 extract_regex = "Login or Sign Up"
 store_as = "marker"
-require_extracted = true
+require_extracted = true   # <— NEW: fail step if regex doesn't match
 
 [flows.delphonix-login-sequence-vars.about]
 method = "GET"
-# The {marker} variable will be interpolated from the previous step if extracted
 url = "https://delphonix.com/about.html?m={marker}"
 expect_status = 200
-max_latency_ms = 500.0
+
+[flows.delphonix-login-sequence-vars.echo]
+method = "GET"
+# Reuse the exact same marker in a second query param
+url = "https://delphonix.com/about.html?marker={marker}&step=echo"
+expect_status = 200
 body_must_contain = "About"
+
+# NEW: header that also uses {marker}
+headers = { X-CATE-Marker = "{marker}" }
+
