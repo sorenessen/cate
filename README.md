@@ -33,6 +33,7 @@ This is v0.1, intentionally simple, fast, and local-first.
   - [Optional assertions (v0.3.0)](#optional-assertions-v030)
   - [Running a flow](#running-a-flow)
   - [Flow logs & Markdown reports](#flow-logs--markdown-reports)
+  - [Flow variables and interpolation (v0.3.1)](#flow-variables-and-interpolation
 - [Safety flags](#safety-flags)
 - [Project structure](#project-structure)
 - [Roadmap](#roadmap)
