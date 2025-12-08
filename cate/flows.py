@@ -22,7 +22,14 @@ class FlowStep:
     url: str
     body_template: Optional[str] = None
     capture_cookies: bool = False
+
+    # Basic status assertion (already existed)
     expect_status: Optional[int] = None
+
+    # NEW: lightweight per-step assertions
+    max_latency_ms: Optional[float] = None          # e.g. 500.0
+    body_must_contain: Optional[str] = None         # e.g. "Dashboard"
+    body_must_not_contain: Optional[str] = None     # e.g. "Traceback"
 
 
 @dataclass
@@ -30,6 +37,16 @@ class Flow:
     name: str
     description: str
     steps: List[FlowStep]
+
+
+@dataclass
+class FlowStepResult:
+    step: FlowStep
+    status_code: int | None
+    latency_ms: float
+    bytes: int | None
+    ok: bool
+    error: str | None = None
 
 
 def load_flows(path: Path | None = None) -> Dict[str, Flow]:
@@ -52,6 +69,10 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
         method = "GET"
         url = "https://example.com/dashboard"
         expect_status = 200
+        max_latency_ms = 500.0
+        body_must_contain = "Dashboard"
+        body_must_not_contain = "Traceback"
+
     """
     if path is None:
         path = Path("flows.toml")
@@ -101,8 +122,14 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 body_template=raw.get("body_template"),
                 capture_cookies=bool(raw.get("capture_cookies", False)),
                 expect_status=raw.get("expect_status"),
+
+                # NEW: optional assertion fields
+                max_latency_ms=raw.get("max_latency_ms"),
+                body_must_contain=raw.get("body_must_contain"),
+                body_must_not_contain=raw.get("body_must_not_contain"),
             )
             steps.append(step)
+
 
         if steps:
             flows[flow_name] = Flow(
@@ -166,7 +193,7 @@ async def run_flow_async(
                 if sleep_for > 0:
                     await asyncio.sleep(sleep_for)
 
-            # v0.3: no per-step fuzz payload yet; use body_template as-is
+            # v0.3.1: no per-step fuzz payload yet; use body_template as-is
             data: Optional[str] = step.body_template
 
             started = time.perf_counter()
@@ -174,13 +201,48 @@ async def run_flow_async(
                 resp = await client.request(method, url, data=data)
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 status = resp.status_code
-                size = len(resp.content)
+                size = len(resp.content) if resp.content is not None else 0
 
-                ok = True
-                error_msg: Optional[str] = None
+                # --- assertion engine for this step ---
+                assertion_errors: list[str] = []
+
+                # 1) Status code
                 if step.expect_status is not None and status != step.expect_status:
-                    ok = False
-                    error_msg = f"expected {step.expect_status}, got {status}"
+                    assertion_errors.append(
+                        f"expected status {step.expect_status}, got {status}"
+                    )
+
+                # 2) Latency
+                if step.max_latency_ms is not None and elapsed_ms > step.max_latency_ms:
+                    assertion_errors.append(
+                        f"latency {elapsed_ms:.1f} ms > max {step.max_latency_ms:.1f} ms"
+                    )
+
+                # 3) Body text checks
+                text = ""
+                try:
+                    text = resp.text or ""
+                except Exception:
+                    # if decode fails, treat as empty for body checks
+                    text = ""
+
+                if step.body_must_contain:
+                    if step.body_must_contain not in text:
+                        assertion_errors.append(
+                            f"body does not contain {step.body_must_contain!r}"
+                        )
+
+                if step.body_must_not_contain:
+                    if step.body_must_not_contain in text:
+                        assertion_errors.append(
+                            f"body contains forbidden substring {step.body_must_not_contain!r}"
+                        )
+
+                ok = not assertion_errors
+                error_msg: Optional[str] = (
+                    "; ".join(assertion_errors) if assertion_errors else None
+                )
+                # --- end assertion engine ---
 
                 results.append(
                     {
@@ -205,9 +267,10 @@ async def run_flow_async(
                         "ok": False,
                         "elapsed_ms": round(elapsed_ms, 2),
                         "bytes": 0,
-                        "error": str(exc),
+                        "error": f"request error: {exc}",
                     }
                 )
+
 
             # httpx client keeps cookies internally; we just track timing
             last_start = time.perf_counter()
