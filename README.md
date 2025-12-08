@@ -18,6 +18,27 @@ It currently supports:
 
 This is v0.1, intentionally simple, fast, and local-first.
 
+## Table of Contents
+- [Features](#features)
+  - [Safe by default](#safe-by-default)
+  - [GET / POST fuzzing](#get--post-fuzzing)
+  - [Custom headers](#custom-headers)
+  - [Rate limiting and error controls](#rate-limiting-and-error-controls)
+- [Profiles (`profiles.toml`)](#profiles-profilestoml)
+- [Output format (JSONL)](#output-format-jsonl)
+- [Logging and reports (v0.2)](#logging-and-reports-v02)
+  - [Example](#example)
+- [Stateful flows (v0.3)](#stateful-flows-v03)
+  - [Flow definitions (`flows.toml`)](#flow-definitions-flowstoml)
+  - [Optional assertions (v0.3.0)](#optional-assertions-v030)
+  - [Running a flow](#running-a-flow)
+  - [Flow logs & Markdown reports](#flow-logs--markdown-reports)
+- [Safety flags](#safety-flags)
+- [Project structure](#project-structure)
+- [Roadmap](#roadmap)
+- [Maintainer](#maintainer)
+
+
 ---
 
 ## Features
