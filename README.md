@@ -215,6 +215,7 @@ capture_cookies = true
 method = "GET"
 url = "https://delphonix.com/about.html"
 expect_status = 200
+```
 
 # Optional assertions (v0.3.0)
 # max_latency_ms       – fail if latency is higher than this
