@@ -293,7 +293,28 @@ python -m cate.cli http-flow --list
   - delphonix-login-sequence: Login as admin, then fetch about page.
   - delphonix-login-sequence-vars: Login as admin, then fetch about page (with variable extraction demo).
 ```
+## Using a custom flows.toml file
 
+By default, CATE looks for a file named flows.toml in the current working directory.
+
+You can override this with `--flows-file`:
+
+### List flows from a specific file
+`python -m cate.cli http-flow --flows-file ci/flows-ci.toml --list`
+
+### Run a specific flow from that file
+```
+python -m cate.cli http-flow \
+  --flows-file flows.toml \
+  --flow delphonix-login-sequence-vars \
+  --output logs/dev-flow-safe-flowsfile
+```
+
+This is useful when you:
+
+- Keep separate flow definitions for local vs CI.
+
+- Want to ship example flows with the repo, but use a different file in your own environment.
 
 ---
 
@@ -406,6 +427,10 @@ This lets you chain flows like:
 2. Feed that value into a follow-up request.
 
 3. Assert that the flow as a whole behaved as expected.
+
+---
+
+
 
 ---
 
