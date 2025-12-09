@@ -15,7 +15,7 @@ from .engine import run_job
 from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
-from .flows import load_flow, run_flow, FlowNotFound
+from .flows import load_flow, load_flows, run_flow, FlowNotFound
 
 # Simple ANSI color helpers
 _RESET = "\033[0m"
@@ -180,46 +180,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show what would be executed, but do not send any HTTP requests.",
     )
 
-    flow_parser = subparsers.add_parser(
+    http_flow_parser = subparsers.add_parser(
         "http-flow",
-        help="Run a stateful HTTP flow (login -> follow-up calls, etc.)",
+        help="Run a multi-step HTTP flow defined in flows.toml",
     )
 
-    flow_parser.add_argument(
+    http_flow_parser.add_argument(
         "--flow",
-        required=True,
-        help="Name of the flow to run (as defined in flows.toml).",
+        type=str,
+        required=False,
+        help="Flow name from flows.toml (e.g. delphonix-login-sequence).",
     )
-    flow_parser.add_argument(
+
+    http_flow_parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List available flows from flows.toml and exit.",
+    )
+
+    http_flow_parser.add_argument(
         "--timeout",
         type=float,
         default=10.0,
         help="Per-request timeout in seconds. Default: 10",
     )
-    flow_parser.add_argument(
+    http_flow_parser.add_argument(
         "--max-rps",
         type=float,
         default=2.0,
         help="Max requests per second across the flow. Default: 2.0",
     )
-    flow_parser.add_argument(
+    http_flow_parser.add_argument(
         "--env",
         type=str,
         default="dev",
         choices=["dev", "stage", "prod"],
         help="Environment label for this flow. Default: dev",
     )
-    flow_parser.add_argument(
+    http_flow_parser.add_argument(
         "--i-understand-prod",
         action="store_true",
         help="Required when --env prod is used, to acknowledge live-target testing.",
     )
-    flow_parser.add_argument(
+    http_flow_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show the flow steps without sending any HTTP requests.",
     )
-    flow_parser.add_argument(
+    http_flow_parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -228,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
             "If set, writes <prefix>.jsonl and <prefix>.summary.md"
         ),
     )
-    flow_parser.add_argument(
+    http_flow_parser.add_argument(
         "--stop-on-fail",
         action="store_true",
         help="Stop executing further steps after the first failing step.",
@@ -773,8 +781,34 @@ def main(argv: Optional[List[str]] = None) -> int:
             headers=cfg["headers"],
         )
 
-    # Handle http-flow ------------------------------------------------------
+        # Handle http-flow ------------------------------------------------------
     elif args.command == "http-flow":
+        # New: support `--list` to enumerate flows and exit
+        if getattr(args, "list", False):
+            try:
+                flows = load_flows()
+            except FileNotFoundError as e:
+                print(_color(f"[CATE] {e}", _FG_RED))
+                return 1
+
+            if not flows:
+                print(_color("[CATE] No flows found in flows.toml.", _FG_YELLOW))
+                return 0
+
+            print(_color("[CATE] Available flows:", _FG_CYAN))
+            for name, flow in flows.items():
+                desc = flow.description or ""
+                if desc:
+                    print(f"  - {name}: {desc}")
+                else:
+                    print(f"  - {name}")
+            return 0
+
+        # Normal flow execution path (unchanged)
+        if not args.flow:
+            print(_color("[CATE] --flow is required unless --list is used.", _FG_RED))
+            return 1
+
         try:
             flow = load_flow(args.flow)
         except FileNotFoundError as e:
@@ -834,7 +868,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_rps=args.max_rps,
         )
 
-
         print("\n[CATE] Flow results:")
         failures = 0
         for r in results:
@@ -875,6 +908,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Fallback --------------------------------------------------------------
     parser.error("Unknown command")
     return 1
+
 
 
 if __name__ == "__main__":
