@@ -313,6 +313,16 @@ async def _run_flow_async(
 
                 error_msg = "; ".join(error_msg_parts) if error_msg_parts else None
 
+                # Only capture body for logging when assertions failed
+                body_for_log: Optional[str] = None
+                if not ok:
+                    if body_text is None:
+                        try:
+                            body_text = resp.text
+                        except Exception:
+                            body_text = None
+                    body_for_log = body_text
+
                 results.append(
                     {
                         "step": step.name,
@@ -327,6 +337,7 @@ async def _run_flow_async(
                         "extracted_var": extracted_var,
                         "extracted_value": extracted_value,
                         "headers": headers or {},
+                        "body": body_for_log,
                     }
                 )
 
@@ -346,8 +357,10 @@ async def _run_flow_async(
                         "extracted_var": None,
                         "extracted_value": None,
                         "headers": headers or {},
+                        "body": None,
                     }
                 )
+
 
             last_start = time.perf_counter()
 

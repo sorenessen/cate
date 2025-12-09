@@ -263,6 +263,15 @@ def build_parser() -> argparse.ArgumentParser:
             "`extract_regex`/`store_as` steps."
         ),
     )
+    http_flow_parser.add_argument(
+        "--save-body",
+        action="store_true",
+        help=(
+            "When steps fail, write their response bodies to disk next to "
+            "the JSONL/summary files."
+        ),
+    )
+
 
 
     return parser
@@ -311,12 +320,18 @@ def summarize_results(results) -> None:
                 f"{len(payloads)} payload(s): {payloads}"
             )
 
-def write_flow_logs(output_prefix: str, results: List[Dict[str, Any]]) -> None:
+def write_flow_logs(
+    output_prefix: str,
+    results: List[Dict[str, Any]],
+    save_body: bool = False,
+) -> None:
     """
     Write flow execution logs:
 
       - <output_prefix>.jsonl       : one JSON object per step
       - <output_prefix>.summary.md  : human-readable Markdown summary
+      - <output_prefix>.stepN_<name>.body.txt : (optional) response bodies
+        for failing steps when save_body=True
     """
     base = Path(output_prefix)
     jsonl_path = Path(f"{output_prefix}.jsonl")
@@ -465,6 +480,34 @@ def write_flow_logs(output_prefix: str, results: List[Dict[str, Any]]) -> None:
 
     summary_md_path.write_text("\n".join(lines), encoding="utf-8")
 
+    # 7. Optional: dump response bodies for failing steps
+    if save_body:
+        import re as _re
+
+        for idx, r in enumerate(results, 1):
+            if r.get("ok"):
+                continue
+            body = r.get("body")
+            if not body:
+                continue
+
+            step_name = str(r.get("step", f"step{idx}"))
+            safe_step = _re.sub(r"[^A-Za-z0-9_-]+", "_", step_name)
+            body_path = Path(f"{output_prefix}.step{idx}_{safe_step}.body.txt")
+            html_capture = Path(f"{output_prefix}.step{idx}_{safe_step}.body.html")
+
+            try:
+                # Always write plain text body for grepping / diffing
+                body_path.write_text(body, encoding="utf-8")
+
+                # Best-effort HTML detection – only write .html if it looks like HTML
+                lower = body.lower()
+                if "<html" in lower or "<!doctype html" in lower:
+                    html_capture.write_text(body, encoding="utf-8")
+
+            except Exception:
+                # best-effort; don't kill the run if body write fails
+                pass
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -1016,7 +1059,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
         if args.output:
-            write_flow_logs(args.output, results)
+            write_flow_logs(
+                args.output,
+                results,
+                save_body=getattr(args, "save_body", False),
+            )
             print(
                 _color(
                     f"[CATE] Flow logs written to {args.output}.jsonl and {args.output}.summary.md",
