@@ -247,6 +247,14 @@ def build_parser() -> argparse.ArgumentParser:
             "this flag adds a global fail-fast mode."
         ),
     )
+    http_flow_parser.add_argument(
+        "--continue-on-fail",
+        action="store_true",
+        help=(
+            "Force the flow to continue through all steps even if some fail. "
+            "Overrides per-step `stop_on_fail = true` flags."
+        ),
+    )
 
 
     return parser
@@ -855,6 +863,25 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         # Handle http-flow ------------------------------------------------------
     elif args.command == "http-flow":
+        # New: support `--list` to enumerate flows and exit
+        if getattr(args, "list", False):
+            ...
+            return 0
+
+        # Global flag conflict check
+        if getattr(args, "stop_on_fail", False) and getattr(args, "continue_on_fail", False):
+            print(
+                _color(
+                    "[CATE] Cannot use --stop-on-fail and --continue-on-fail together.",
+                    _FG_RED,
+                )
+            )
+            return 1
+
+        # Normal flow execution path (unchanged)
+        if not args.flow:
+            ...
+
         # Optional: allow overriding the flows file (default handled by flows module)
         flows_path = Path(args.flows_file) if getattr(args, "flows_file", None) else None
 
@@ -941,7 +968,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             flow=flow,
             timeout=args.timeout,
             max_rps=args.max_rps,
-            stop_on_first_failure=args.stop_on_fail,
+            stop_on_first_failure=getattr(args, "stop_on_fail", False),
+            ignore_step_stop_flags=getattr(args, "continue_on_fail", False),
         )
 
 

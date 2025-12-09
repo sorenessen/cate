@@ -156,6 +156,7 @@ async def _run_flow_async(
     timeout: float = 10.0,
     max_rps: float = 2.0,
     stop_on_first_failure: bool = False,
+    ignore_step_stop_flags: bool = False,
 ) -> List[Dict[str, Any]]:
 
 
@@ -351,10 +352,12 @@ async def _run_flow_async(
             last_start = time.perf_counter()
 
             # Early stop if this step failed and either:
-            #  - the step itself has stop_on_fail = true, OR
-            #  - the global CLI flag --stop-on-fail was used
-            if not results[-1]["ok"] and (step.stop_on_fail or stop_on_first_failure):
-                break
+            #  - global stop_on_first_failure is True, or
+            #  - this step's stop_on_fail is True (unless globally ignored)
+            if not results[-1]["ok"]:
+                step_wants_stop = step.stop_on_fail and not ignore_step_stop_flags
+                if stop_on_first_failure or step_wants_stop:
+                    break
 
 
 
@@ -366,6 +369,7 @@ def run_flow(
     timeout: float = 10.0,
     max_rps: float = 2.0,
     stop_on_first_failure: bool = False,
+    ignore_step_stop_flags: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Synchronous wrapper around _run_flow_async.
@@ -376,6 +380,7 @@ def run_flow(
             timeout=timeout,
             max_rps=max_rps,
             stop_on_first_failure=stop_on_first_failure,
+            ignore_step_stop_flags=ignore_step_stop_flags,
         )
     )
 
