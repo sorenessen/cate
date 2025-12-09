@@ -155,7 +155,10 @@ async def _run_flow_async(
     flow: Flow,
     timeout: float = 10.0,
     max_rps: float = 2.0,
+    stop_on_first_failure: bool = False,
 ) -> List[Dict[str, Any]]:
+
+
     """
     Execute a Flow with a shared cookie jar and simple variable store.
 
@@ -347,9 +350,13 @@ async def _run_flow_async(
 
             last_start = time.perf_counter()
 
-            # Early stop if this step failed and stop_on_fail is set
-            if not results[-1]["ok"] and step.stop_on_fail:
+            # Early stop if this step failed and either:
+            #  - the step itself has stop_on_fail = true, OR
+            #  - the global CLI flag --stop-on-fail was used
+            if not results[-1]["ok"] and (step.stop_on_fail or stop_on_first_failure):
                 break
+
+
 
     return results
 
@@ -358,8 +365,17 @@ def run_flow(
     flow: Flow,
     timeout: float = 10.0,
     max_rps: float = 2.0,
+    stop_on_first_failure: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Synchronous wrapper around _run_flow_async.
     """
-    return asyncio.run(_run_flow_async(flow, timeout=timeout, max_rps=max_rps))
+    return asyncio.run(
+        _run_flow_async(
+            flow,
+            timeout=timeout,
+            max_rps=max_rps,
+            stop_on_first_failure=stop_on_first_failure,
+        )
+    )
+
