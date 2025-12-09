@@ -255,6 +255,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Overrides per-step `stop_on_fail = true` flags."
         ),
     )
+    http_flow_parser.add_argument(
+        "--vars-dump",
+        action="store_true",
+        help=(
+            "After the flow finishes, print extracted variables from "
+            "`extract_regex`/`store_as` steps."
+        ),
+    )
 
 
     return parser
@@ -988,6 +996,24 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(_color(f"[{status_label}] {line}", color))
             if not r["ok"]:
                 failures += 1
+
+            # Optional: dump extracted variables (from extract_regex/store_as)
+            if getattr(args, "vars_dump", False):
+                vars_map: Dict[str, Any] = {}
+                for r in results:
+                    var_name = r.get("extracted_var")
+                    var_value = r.get("extracted_value")
+                    if var_name is not None and var_value is not None:
+                        # last writer wins if the same var is extracted multiple times
+                        vars_map[var_name] = var_value
+
+                if not vars_map:
+                    print(_color("[CATE] No extracted variables to dump.", _FG_YELLOW))
+                else:
+                    print(_color("[CATE] Extracted variables:", _FG_CYAN))
+                    for k, v in vars_map.items():
+                        print(f"  - {k} = {v!r}")
+
 
         if args.output:
             write_flow_logs(args.output, results)
