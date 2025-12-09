@@ -10,6 +10,7 @@ from statistics import mean
 from datetime import datetime, timezone
 import sys
 
+from cate import __version__
 from .engine import run_job
 from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
@@ -58,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cate",
         description="Calypso Automated Testing Engine",
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
