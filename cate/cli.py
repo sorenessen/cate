@@ -140,7 +140,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    # NEW: profile name
     http_parser.add_argument(
         "--profile",
         type=str,
@@ -184,20 +183,23 @@ def build_parser() -> argparse.ArgumentParser:
         "http-flow",
         help="Run a multi-step HTTP flow defined in flows.toml",
     )
-
+    http_flow_parser.add_argument(
+        "--flows-file",
+        type=str,
+        default="flows.toml",
+        help="Path to flows TOML file (default: flows.toml in current directory).",
+    )
     http_flow_parser.add_argument(
         "--flow",
         type=str,
         required=False,
         help="Flow name from flows.toml (e.g. delphonix-login-sequence).",
     )
-
     http_flow_parser.add_argument(
         "--list",
         action="store_true",
         help="List available flows from flows.toml and exit.",
     )
-
     http_flow_parser.add_argument(
         "--timeout",
         type=float,
@@ -783,10 +785,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         # Handle http-flow ------------------------------------------------------
     elif args.command == "http-flow":
+        # Optional: allow overriding the flows file (default handled by flows module)
+        flows_path = Path(args.flows_file) if getattr(args, "flows_file", None) else None
+
         # New: support `--list` to enumerate flows and exit
         if getattr(args, "list", False):
             try:
-                flows = load_flows()
+                flows = load_flows(flows_path)
             except FileNotFoundError as e:
                 print(_color(f"[CATE] {e}", _FG_RED))
                 return 1
@@ -804,13 +809,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"  - {name}")
             return 0
 
-        # Normal flow execution path (unchanged)
-        if not args.flow:
+        # Normal flow execution path
+        if not getattr(args, "flow", None):
             print(_color("[CATE] --flow is required unless --list is used.", _FG_RED))
             return 1
 
         try:
-            flow = load_flow(args.flow)
+            # NOTE: now passes `path=flows_path` so `--flows-file` is honored
+            flow = load_flow(args.flow, path=flows_path)
         except FileNotFoundError as e:
             print(_color(f"[CATE] {e}", _FG_RED))
             return 1
@@ -904,6 +910,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         print(_color("[CATE] Flow completed successfully.", _FG_GREEN))
         return 0
+
 
     # Fallback --------------------------------------------------------------
     parser.error("Unknown command")
