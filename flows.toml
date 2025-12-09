@@ -35,6 +35,7 @@ capture_cookies = true
 
 # Extract a marker string from the login page and store it
 extract_regex = "Login or Sign Up"
+# max_latency_ms = 1.0
 store_as = "marker"
 require_extracted = true   # <— NEW: fail step if regex doesn't match
 

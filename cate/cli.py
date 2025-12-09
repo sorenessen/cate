@@ -241,8 +241,13 @@ def build_parser() -> argparse.ArgumentParser:
     http_flow_parser.add_argument(
         "--stop-on-fail",
         action="store_true",
-        help="Stop executing further steps after the first failing step.",
+        help=(
+            "Stop the entire flow as soon as any step fails. "
+            "Per-step `stop_on_fail = true` in flows.toml still applies; "
+            "this flag adds a global fail-fast mode."
+        ),
     )
+
 
     return parser
 
@@ -867,12 +872,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         )
 
-        # NOTE: current run_flow signature doesn't take env
         results = run_flow(
             flow=flow,
             timeout=args.timeout,
             max_rps=args.max_rps,
+            stop_on_first_failure=args.stop_on_fail,
         )
+
 
         print("\n[CATE] Flow results:")
         failures = 0
