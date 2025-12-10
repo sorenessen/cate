@@ -1,0 +1,8 @@
+[flows.demo-echo]
+description = "Tiny demo flow loaded via include."
+steps = ["echo"]
+
+[flows.demo-echo.echo]
+method = "GET"
+url = "https://delphonix.com/about.html"
+expect_status = 200

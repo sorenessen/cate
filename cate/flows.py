@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import asyncio
 import re
@@ -47,11 +47,161 @@ class Flow:
     steps: List[FlowStep]
 
 
+# def _load_flows_file(path: Path, visited: Optional[Set[Path]] = None) -> Dict[str, Any]:
+#     """
+#     Recursive loader for flows TOML with a simple `include` mechanism.
+
+#     Each file can optionally declare:
+
+#         include = ["relative/path1.toml", "relative/path2.toml"]
+
+#     All [flows.*] tables from included files are merged, with *later* files
+#     overriding earlier ones on name collisions.
+#     """
+#     if visited is None:
+#         visited = set()
+
+#     path = path.resolve()
+#     if path in visited:
+#         # Prevent include cycles
+#         return {"flows": {}}
+
+#     visited.add(path)
+
+#     if not path.exists():
+#         raise FileNotFoundError(f"No flows file found at {path!s}")
+
+#     text = path.read_text(encoding="utf-8")
+#     data = tomllib.loads(text)
+
+#     combined: Dict[str, Any] = {"flows": {}}
+
+#     # 1) Process includes first (so this file can override them if desired)
+#     includes = data.get("include", [])
+#     if isinstance(includes, str):
+#         includes = [includes]
+
+#     if isinstance(includes, list):
+#         for inc in includes:
+#             inc_path = (path.parent / inc).resolve()
+#             inc_data = _load_flows_file(inc_path, visited)
+#             inc_flows = inc_data.get("flows", {})
+#             if isinstance(inc_flows, dict):
+#                 combined["flows"].update(inc_flows)
+
+#     # 2) Merge this file's own [flows.*] tables
+#     flows_section = data.get("flows", {})
+#     if isinstance(flows_section, dict):
+#         combined["flows"].update(flows_section)
+
+#     return combined
+
+
+# def load_flows(path: Path | None = None) -> Dict[str, Flow]:
+#     """
+#     Load all flows from a TOML file, with support for `include`.
+
+#     Expected shape in flows.toml:
+
+#         include = ["flows/demo-flows.toml"]
+
+#         [flows.my-flow]
+#         description = "..."
+#         steps = ["login", "dashboard"]
+
+#         [flows.my-flow.login]
+#         method = "POST"
+#         url = "https://example.com/login"
+#         body_template = "user=admin&pass={password}"
+#         capture_cookies = true
+
+#         [flows.my-flow.dashboard]
+#         method = "GET"
+#         url = "https://example.com/dashboard"
+#         expect_status = 200
+#     """
+#     if path is None:
+#         path = Path("flows.toml")
+#     else:
+#         path = Path(path)
+
+#     data = _load_flows_file(path)
+
+#     flows_section = data.get("flows", {})
+#     if not isinstance(flows_section, dict):
+#         raise ValueError("flows.toml (and included files) must contain a [flows] table.")
+
+#     flows: Dict[str, Flow] = {}
+
+#     for flow_name, cfg in flows_section.items():
+#         if not isinstance(cfg, dict):
+#             continue
+
+#         description = cfg.get("description", "")
+#         steps_order = cfg.get("steps", [])
+#         if not isinstance(steps_order, list) or not steps_order:
+#             # Require explicit step order
+#             continue
+
+#         # Gather step definitions from nested tables
+#         step_defs: Dict[str, Any] = {}
+#         for key, value in cfg.items():
+#             if isinstance(value, dict) and key not in ("steps", "description"):
+#                 step_defs[key] = value
+
+#         steps: List[FlowStep] = []
+#         for step_name in steps_order:
+#             raw = step_defs.get(step_name)
+#             if not isinstance(raw, dict):
+#                 # skip unknown / malformed step
+#                 continue
+#             method = str(raw.get("method", "GET")).upper()
+#             url = str(raw.get("url", ""))
+#             if not url:
+#                 continue
+
+#             raw_headers = raw.get("headers")
+#             headers: Optional[Dict[str, str]] = None
+#             if isinstance(raw_headers, dict):
+#                 headers = {str(k): str(v) for k, v in raw_headers.items()}
+
+#             step = FlowStep(
+#                 name=step_name,
+#                 method=method,
+#                 url=url,
+#                 body_template=raw.get("body_template"),
+#                 capture_cookies=bool(raw.get("capture_cookies", False)),
+#                 expect_status=raw.get("expect_status"),
+#                 headers=headers,
+#                 max_latency_ms=raw.get("max_latency_ms"),
+#                 body_must_contain=raw.get("body_must_contain"),
+#                 body_must_not_contain=raw.get("body_must_not_contain"),
+#                 stop_on_fail=bool(raw.get("stop_on_fail", False)),
+#                 extract_regex=raw.get("extract_regex"),
+#                 store_as=raw.get("store_as"),
+#                 require_extracted=bool(raw.get("require_extracted", False)),
+#             )
+#             steps.append(step)
+
+#         if steps:
+#             flows[flow_name] = Flow(
+#                 name=flow_name,
+#                 description=description,
+#                 steps=steps,
+#             )
+
+#     return flows
+
 def load_flows(path: Path | None = None) -> Dict[str, Flow]:
     """
-    Load all flows from a TOML file.
+    Load all flows from a TOML file, plus any additional TOML files
+    in a sibling `flows/` directory.
 
-    Expected shape in flows.toml:
+    Precedence on name collisions:
+      - Flows in the main file (flows.toml) are loaded first
+      - Flows in flows/*.toml are loaded afterwards and override by name
+
+    Expected shape in each TOML file:
 
         [flows.my-flow]
         description = "..."
@@ -68,20 +218,42 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
         url = "https://example.com/dashboard"
         expect_status = 200
     """
+    # 1) Resolve the main file
     if path is None:
         path = Path("flows.toml")
+    else:
+        path = Path(path)
 
     if not path.exists():
         raise FileNotFoundError(f"No flows file found at {path!s}")
 
-    data = tomllib.loads(path.read_text(encoding="utf-8"))
-    flows_section = data.get("flows", {})
-    if not isinstance(flows_section, dict):
-        raise ValueError("flows.toml must contain a [flows] table.")
+    # 2) Load base flows from the main file
+    text = path.read_text(encoding="utf-8")
+    data = tomllib.loads(text)
+
+    combined_flows: Dict[str, Any] = {}
+    base_flows_section = data.get("flows", {})
+    if isinstance(base_flows_section, dict):
+        combined_flows.update(base_flows_section)
+
+    # 3) Load any additional flows from `flows/*.toml` (sibling directory)
+    flows_dir = path.parent / "flows"
+    if flows_dir.is_dir():
+        for child in sorted(flows_dir.glob("*.toml")):
+            child_text = child.read_text(encoding="utf-8")
+            child_data = tomllib.loads(child_text)
+            child_flows = child_data.get("flows", {})
+            if isinstance(child_flows, dict):
+                # Later files override earlier by name
+                combined_flows.update(child_flows)
+
+    if not isinstance(combined_flows, dict):
+        raise ValueError("flows.toml (and any flows/*.toml) must contain a [flows] table.")
 
     flows: Dict[str, Flow] = {}
 
-    for flow_name, cfg in flows_section.items():
+    # 4) Build Flow / FlowStep objects from the merged flows dict
+    for flow_name, cfg in combined_flows.items():
         if not isinstance(cfg, dict):
             continue
 
@@ -91,10 +263,9 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
             # Require explicit step order
             continue
 
+        # Gather step definitions from nested tables
         step_defs: Dict[str, Any] = {}
-        # child tables appear as nested dicts in cfg
         for key, value in cfg.items():
-            # heuristically treat nested dicts as step definitions
             if isinstance(value, dict) and key not in ("steps", "description"):
                 step_defs[key] = value
 
@@ -121,13 +292,11 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 body_template=raw.get("body_template"),
                 capture_cookies=bool(raw.get("capture_cookies", False)),
                 expect_status=raw.get("expect_status"),
-                headers=headers, 
-
+                headers=headers,
                 max_latency_ms=raw.get("max_latency_ms"),
                 body_must_contain=raw.get("body_must_contain"),
                 body_must_not_contain=raw.get("body_must_not_contain"),
                 stop_on_fail=bool(raw.get("stop_on_fail", False)),
-
                 extract_regex=raw.get("extract_regex"),
                 store_as=raw.get("store_as"),
                 require_extracted=bool(raw.get("require_extracted", False)),
@@ -144,12 +313,12 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
     return flows
 
 
+
 def load_flow(name: str, path: Path | None = None) -> Flow:
     flows = load_flows(path)
     if name not in flows:
         raise FlowNotFound(f"Flow '{name}' not found in flows.toml")
     return flows[name]
-
 
 async def _run_flow_async(
     flow: Flow,
