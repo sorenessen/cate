@@ -415,6 +415,7 @@ async def _run_flow_async(
     max_rps: float = 2.0,
     stop_on_first_failure: bool = False,
     ignore_step_stop_flags: bool = False,
+    initial_vars: Optional[Dist[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
 
 
@@ -443,7 +444,12 @@ async def _run_flow_async(
             "extracted_value": "About",
         }
     """
-    state: Dict[str, Any] = {"cookies": httpx.Cookies(), "vars": {}}
+    state: Dict[str, Any] = {
+        "cookies": httpx.Cookies(),
+        # Seed with any CLI / external vars; copy to avoid mutating caller dict
+        "vars": dict(initial_vars or {}),
+    }
+
     results: List[Dict[str, Any]] = []
 
     async with httpx.AsyncClient(timeout=timeout, cookies=state["cookies"]) as client:
@@ -648,6 +654,7 @@ def run_flow(
     max_rps: float = 2.0,
     stop_on_first_failure: bool = False,
     ignore_step_stop_flags: bool = False,
+    initial_vars: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Synchronous wrapper around _run_flow_async.
@@ -659,6 +666,6 @@ def run_flow(
             max_rps=max_rps,
             stop_on_first_failure=stop_on_first_failure,
             ignore_step_stop_flags=ignore_step_stop_flags,
+            initial_vars=initial_vars,
         )
     )
-
