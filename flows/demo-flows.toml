@@ -4,5 +4,7 @@ steps = ["echo"]
 
 [flows.demo-echo.echo]
 method = "GET"
-url = "https://delphonix.com/about.html"
+# url = "https://delphonix.com/about.html"
+url = "https://delphonix.com/about.html?marker={urlencode(marker)}&step=echo"
+
 expect_status = 200
