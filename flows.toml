@@ -55,3 +55,20 @@ expect_status = 200
 body_must_contain = "About"
 headers = { X-CATE-Marker = "{marker}" }
 
+[flows.delphonix-login-cli-vars]
+description = "Login using CLI-provided username/password, then fetch about page."
+steps = ["login", "about"]
+
+[flows.delphonix-login-cli-vars.login]
+method = "POST"
+url = "https://delphonix.com/login.php"
+body_template = "user={username}&pass={password}"
+capture_cookies = true
+expect_status = 200
+
+[flows.delphonix-login-cli-vars.about]
+method = "GET"
+url = "https://delphonix.com/about.php"  # or whatever your “after login” page really is
+capture_cookies = false
+expect_status = 200
+

@@ -54,6 +54,25 @@ def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
             headers[key] = value
     return headers
 
+def parse_vars(var_list: Optional[List[str]]) -> Dict[str, str]:
+    """
+    Parse repeated --var key=value into a dict.
+    Ignores malformed entries.
+    """
+    vars_map: Dict[str, str] = {}
+    if not var_list:
+        return vars_map
+
+    for raw in var_list:
+        if "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            vars_map[key] = value
+    return vars_map
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -271,6 +290,17 @@ def build_parser() -> argparse.ArgumentParser:
             "the JSONL/summary files."
         ),
     )
+    http_flow_parser.add_argument(
+        "--var",
+        action="append",
+        default=None,
+        help=(
+            "Set a template variable for this flow, e.g. "
+            "--var username=admin --var password=secret. "
+            "These become available in templates as {username}, {password}, etc."
+        ),
+    )
+
 
 
 
@@ -1010,12 +1040,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         stop_on_first_failure = bool(args.stop_on_fail)
         ignore_step_stop_flags = bool(args.continue_on_fail)
 
+        # CLI-provided variables for template interpolation
+        initial_vars: Dict[str, Any] = {}
+        if getattr(args, "var", None):
+            initial_vars = parse_vars(args.var)
+            if initial_vars:
+                print(_color(f"[CATE] Seeded flow vars: {initial_vars}", _FG_CYAN))
+
+
         results = run_flow(
             flow=flow,
             timeout=args.timeout,
             max_rps=args.max_rps,
             stop_on_first_failure=stop_on_first_failure,
             ignore_step_stop_flags=ignore_step_stop_flags,
+            initial_vars=initial_vars,
         )
 
         print("\n[CATE] Flow results:")
