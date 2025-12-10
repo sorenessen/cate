@@ -6,6 +6,31 @@ The version numbers below match the informal milestones we’ve been using in th
 
 ---
 
+## v0.3.1 – Flow polish & logging upgrades
+
+### Added
+- `--stop-on-fail` and `--continue-on-fail` flags for `http-flow`:
+  - Global fail-fast or “always keep going” behavior for flows.
+- `--vars-dump` flag to print extracted variables from `extract_regex` / `store_as` steps.
+- `--save-body` flag to write failing response bodies next to flow logs:
+  - Saves `<prefix>.stepN_<step>.body.txt`
+  - If the body looks like HTML, also saves `<prefix>.stepN_<step>.body.html`.
+- `include = [...]` support in `flows.toml`:
+  - Allows splitting flows across multiple TOML files, which are merged recursively.
+- Tiny template functions for variable interpolation in flows:
+  - `{marker}` → direct value
+  - `{lower(marker)}`, `{upper(marker)}`, `{strip(marker)}`, `{urlencode(marker)}`
+  - Works in URLs, bodies, and headers.
+
+### Improved
+- Flow summary markdown now includes:
+  - Assertion breakdown (status_ok, latency_ok, body_contains_ok, etc.).
+  - Extracted variables per step where applicable.
+- Flow JSONL now records response bodies for failing steps when `--save-body` is enabled, to make debugging and security analysis easier.
+
+
+
+
 ## [Unreleased]
 
 - Per-step fuzz payloads in flows (shared wordlists across flow steps)
