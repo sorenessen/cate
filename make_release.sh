@@ -72,7 +72,10 @@ done <<< "$COMMITS_RAW"
 COMMIT_COUNT="${#ALL_COMMITS[@]}"
 OUT_FILE="RELEASE_NOTES_DRAFT.md"
 
-{
+{ 
+  echo "# CATE v${NEW_VER} - ${TITLE}"
+  echo
+
   echo "## Overview"
   echo
   echo "**Focus:** ${TITLE}  "
