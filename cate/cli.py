@@ -15,7 +15,7 @@ from .engine import run_job
 from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
-from .flows import load_flow, load_flows, run_flow, FlowNotFound
+from .flows import load_flow, load_flows, run_flow, FlowNotFound, _apply_template_functions
 
 # Simple ANSI color helpers
 _RESET = "\033[0m"
@@ -1018,7 +1018,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             print(line)
 
-        # DRY RUN: just show what *would* happen (allowed even for prod)
+        # CLI-provided variables for template interpolation
+        initial_vars: Dict[str, Any] = {}
+        if getattr(args, "var", None):
+            initial_vars = parse_vars(args.var)
+            if initial_vars:
+                print(_color(f"[CATE] Seeded flow vars: {initial_vars}", _FG_CYAN))
+
+
+        # DRY RUN: show what *would* happen, including interpolated templates,
+        # but do not send any HTTP requests (allowed even for prod).
         if args.dry_run:
             print(
                 _color(
@@ -1027,7 +1036,37 @@ def main(argv: Optional[List[str]] = None) -> int:
                     _FG_MAGENTA,
                 )
             )
+
+            # We only have CLI-provided vars here; no extracted vars since we don't run.
+            vars_map: Dict[str, Any] = dict(initial_vars)
+
+            print(_color("[CATE] DRY RUN request preview:", _FG_CYAN))
+            for idx, step in enumerate(flow.steps, 1):
+                url_template = step.url
+                body_template = step.body_template
+                headers_template = step.headers or {}
+
+                # Apply template functions where possible; unknown vars stay as-is
+                url_preview = _apply_template_functions(url_template, vars_map)
+                body_preview = (
+                    _apply_template_functions(body_template, vars_map)
+                    if body_template is not None
+                    else None
+                )
+                headers_preview = {
+                    key: _apply_template_functions(value, vars_map)
+                    for key, value in headers_template.items()
+                }
+
+                print(f"  Step {idx}: {step.name}")
+                print(f"    {step.method} {url_preview}")
+                if body_preview is not None:
+                    print(f"    Body: {body_preview}")
+                if headers_preview:
+                    print(f"    Headers: {headers_preview}")
+
             return 0
+
 
         # Safety: prevent accidental prod without explicit opt-in
         if args.env == "prod" and not args.i_understand_prod:
