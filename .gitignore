@@ -14,6 +14,7 @@ env/
 logs/
 *.log
 *.jsonl
+RELEASE_NOTES_DRAFT.md
 
 # OS / editor cruft
 .DS_Store
