@@ -353,6 +353,8 @@ def summarize_results(results) -> None:
 def write_flow_logs(
     output_prefix: str,
     results: List[Dict[str, Any]],
+    env: Optional[str] = None,
+    initial_vars: Optional[Dict[str, Any]] = None,
     save_body: bool = False,
 ) -> None:
     """
@@ -364,8 +366,8 @@ def write_flow_logs(
         for failing steps when save_body=True
     """
     base = Path(output_prefix)
-    jsonl_path = Path(f"{output_prefix}.jsonl")
-    summary_md_path = Path(f"{output_prefix}.summary.md")
+    jsonl_path = Path(f"logs/{output_prefix}.jsonl")
+    summary_md_path = Path(f"logs/{output_prefix}.summary.md")
 
     # JSONL: one line per step (unchanged)
     with jsonl_path.open("w", encoding="utf-8") as f:
@@ -400,6 +402,16 @@ def write_flow_logs(
     lines.append(f"| Steps | {total} |")
     lines.append(f"| Failures | {failures} |")
     lines.append(f"| Avg latency | {avg_ms:.2f} ms |")
+
+    # Optional env / CLI vars context
+    if env is not None:
+        lines.append(f"| Env | {env} |")
+
+    if initial_vars:
+        # Only show keys, not values (avoid leaking secrets)
+        var_keys = ", ".join(sorted(str(k) for k in initial_vars.keys()))
+        lines.append(f"| Seeded vars | {var_keys} |")
+
     lines.append("")
 
     # 3. Failing steps (if any)
@@ -1094,11 +1106,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             write_flow_logs(
                 args.output,
                 results,
+                env=args.env,
+                initial_vars=initial_vars,
                 save_body=args.save_body,
             )
             print(
                 _color(
-                    f"[CATE] Flow logs written to {args.output}.jsonl and {args.output}.summary.md",
+                    f"[CATE] Flow logs written to logs/{args.output}.jsonl and {args.output}.summary.md",
                     _FG_CYAN,
                 )
             )
