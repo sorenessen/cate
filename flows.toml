@@ -1,3 +1,5 @@
+include = ["flows/demo-flows.toml"]
+
 [flows.delphonix-login-sequence]
 description = "Login as admin, then fetch about page."
 

@@ -914,13 +914,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         # Handle http-flow ------------------------------------------------------
     elif args.command == "http-flow":
-        # New: support `--list` to enumerate flows and exit
-        if getattr(args, "list", False):
-            ...
-            return 0
+        # Optional: allow overriding the flows file (default handled by flows module)
+        flows_path = Path(args.flows_file) if getattr(args, "flows_file", None) else None
 
         # Global flag conflict check
-        if getattr(args, "stop_on_fail", False) and getattr(args, "continue_on_fail", False):
+        if args.stop_on_fail and args.continue_on_fail:
             print(
                 _color(
                     "[CATE] Cannot use --stop-on-fail and --continue-on-fail together.",
@@ -929,15 +927,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             return 1
 
-        # Normal flow execution path (unchanged)
-        if not args.flow:
-            ...
-
-        # Optional: allow overriding the flows file (default handled by flows module)
-        flows_path = Path(args.flows_file) if getattr(args, "flows_file", None) else None
-
-        # New: support `--list` to enumerate flows and exit
-        if getattr(args, "list", False):
+        # --list: enumerate flows and exit
+        if args.list:
             try:
                 flows = load_flows(flows_path)
             except FileNotFoundError as e:
@@ -958,7 +949,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
 
         # Normal flow execution path
-        if not getattr(args, "flow", None):
+        if not args.flow:
             print(_color("[CATE] --flow is required unless --list is used.", _FG_RED))
             return 1
 
@@ -1015,14 +1006,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         )
 
+        # Global fail-fast / continue behaviour
+        stop_on_first_failure = bool(args.stop_on_fail)
+        ignore_step_stop_flags = bool(args.continue_on_fail)
+
         results = run_flow(
             flow=flow,
             timeout=args.timeout,
             max_rps=args.max_rps,
-            stop_on_first_failure=getattr(args, "stop_on_fail", False),
-            ignore_step_stop_flags=getattr(args, "continue_on_fail", False),
+            stop_on_first_failure=stop_on_first_failure,
+            ignore_step_stop_flags=ignore_step_stop_flags,
         )
-
 
         print("\n[CATE] Flow results:")
         failures = 0
@@ -1040,29 +1034,28 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not r["ok"]:
                 failures += 1
 
-            # Optional: dump extracted variables (from extract_regex/store_as)
-            if getattr(args, "vars_dump", False):
-                vars_map: Dict[str, Any] = {}
-                for r in results:
-                    var_name = r.get("extracted_var")
-                    var_value = r.get("extracted_value")
-                    if var_name is not None and var_value is not None:
-                        # last writer wins if the same var is extracted multiple times
-                        vars_map[var_name] = var_value
+        # Optional: dump extracted variables (from extract_regex/store_as)
+        if args.vars_dump:
+            vars_map: Dict[str, Any] = {}
+            for r in results:
+                var_name = r.get("extracted_var")
+                var_value = r.get("extracted_value")
+                if var_name is not None and var_value is not None:
+                    # last writer wins if the same var is extracted multiple times
+                    vars_map[var_name] = var_value
 
-                if not vars_map:
-                    print(_color("[CATE] No extracted variables to dump.", _FG_YELLOW))
-                else:
-                    print(_color("[CATE] Extracted variables:", _FG_CYAN))
-                    for k, v in vars_map.items():
-                        print(f"  - {k} = {v!r}")
-
+            if not vars_map:
+                print(_color("[CATE] No extracted variables to dump.", _FG_YELLOW))
+            else:
+                print(_color("[CATE] Extracted variables:", _FG_CYAN))
+                for k, v in vars_map.items():
+                    print(f"  - {k} = {v!r}")
 
         if args.output:
             write_flow_logs(
                 args.output,
                 results,
-                save_body=getattr(args, "save_body", False),
+                save_body=args.save_body,
             )
             print(
                 _color(
@@ -1082,6 +1075,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         print(_color("[CATE] Flow completed successfully.", _FG_GREEN))
         return 0
+
 
 
     # Fallback --------------------------------------------------------------
