@@ -1,4 +1,6 @@
-include = ["flows/demo-flows.toml"]
+# Demo flows for local testing:
+# include = ["flows/demo-flows.toml"]
+
 
 [flows.delphonix-login-sequence]
 description = "Login as admin, then fetch about page."
@@ -48,11 +50,8 @@ expect_status = 200
 
 [flows.delphonix-login-sequence-vars.echo]
 method = "GET"
-# Reuse the exact same marker in a second query param
-url = "https://delphonix.com/about.html?marker={marker}&step=echo"
+url = "https://delphonix.com/about.html?marker={urlencode(marker)}&step=echo"
 expect_status = 200
 body_must_contain = "About"
-
-# NEW: header that also uses {marker}
 headers = { X-CATE-Marker = "{marker}" }
 
