@@ -7,13 +7,55 @@ from typing import Any, Dict, List, Optional, Set
 import asyncio
 import re
 import time
-import urllib.parse
 
 import httpx
 import tomllib
 from urllib.parse import quote_plus
 
 _TEMPLATE_RE = re.compile(r"{([^}]+)}")
+
+
+def _apply_template_functions(template: str, vars_map: Dict[str, Any]) -> str:
+    """
+    Apply tiny template functions to a string using vars_map.
+
+    Supports:
+      {marker}
+      {lower(marker)}
+      {upper(marker)}
+      {strip(marker)}
+      {urlencode(marker)}
+    """
+
+    def _apply_func(func: str, value: str) -> str:
+        if func == "lower":
+            return value.lower()
+        if func == "upper":
+            return value.upper()
+        if func == "strip":
+            return value.strip()
+        if func == "urlencode":
+            return quote_plus(value)
+        # Unknown function → leave value unchanged
+        return value
+
+    def _replace(match: re.Match[str]) -> str:
+        expr = match.group(1).strip()
+
+        # function-style: {func(var)}
+        if "(" in expr and expr.endswith(")"):
+            func_name, inner = expr.split("(", 1)
+            func_name = func_name.strip()
+            var_name = inner[:-1].strip()  # drop trailing ')'
+
+            raw_value = vars_map.get(var_name, "")
+            return _apply_func(func_name, str(raw_value))
+
+        # plain {var}
+        return str(vars_map.get(expr, ""))
+
+    return _TEMPLATE_RE.sub(_replace, template)
+
 
 
 
@@ -428,53 +470,17 @@ async def _run_flow_async(
             url_template = step.url
             body_template = step.body_template
 
-            # Variable interpolation helper with tiny template functions
-            # Supported patterns:
-            #   {marker}                  → plain .format(**state["vars"])
-            #   {lower(marker)}           → value.lower()
-            #   {upper(marker)}           → value.upper()
-            #   {strip(marker)}           → value.strip()
-            #   {urlencode(marker)}       → urllib.parse.quote_plus(value)
             # Variable interpolation helper with template functions
+            # Supported patterns:
+            #   {marker}
+            #   {lower(marker)}
+            #   {upper(marker)}
+            #   {strip(marker)}
+            #   {urlencode(marker)}
             def interpolate(template: Optional[str]) -> Optional[str]:
                 if template is None:
                     return None
                 return _apply_template_functions(template, state["vars"])
-
-
-                text = template
-
-                # First pass: handle {func(var)} patterns
-                def _apply_func(match: re.Match) -> str:
-                    func_name, var_name = match.group(1), match.group(2)
-                    raw = state["vars"].get(var_name)
-                    if raw is None:
-                        # If the var doesn't exist yet, leave it untouched
-                        return match.group(0)
-
-                    value = str(raw)
-
-                    if func_name == "lower":
-                        return value.lower()
-                    elif func_name == "upper":
-                        return value.upper()
-                    elif func_name == "strip":
-                        return value.strip()
-                    elif func_name == "urlencode":
-                        return urllib.parse.quote_plus(value)
-                    else:
-                        # Unknown function – leave the original text in place
-                        return match.group(0)
-
-                # Replace any {func(var)} occurrences
-                text = re.sub(r"\{(\w+)\((\w+)\)\}", _apply_func, text)
-
-                # Second pass: normal `{var}` interpolation
-                try:
-                    return text.format(**state["vars"])
-                except KeyError:
-                    # Missing vars – just return the partially-processed template
-                    return text
 
 
             url = interpolate(url_template) or url_template
