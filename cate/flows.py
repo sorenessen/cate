@@ -7,6 +7,10 @@ from typing import Any, Dict, List, Optional, Set
 import asyncio
 import re
 import time
+import uuid
+import secrets
+import string
+from datetime import datetime, timezone
 
 import httpx
 import tomllib
@@ -14,55 +18,9 @@ from urllib.parse import quote_plus
 
 _TEMPLATE_RE = re.compile(r"{([^}]+)}")
 
-
-def _apply_template_functions(template: str, vars_map: Dict[str, Any]) -> str:
-    """
-    Apply tiny template functions to a string using vars_map.
-
-    Supports:
-      {marker}
-      {lower(marker)}
-      {upper(marker)}
-      {strip(marker)}
-      {urlencode(marker)}
-    """
-
-    def _apply_func(func: str, value: str) -> str:
-        if func == "lower":
-            return value.lower()
-        if func == "upper":
-            return value.upper()
-        if func == "strip":
-            return value.strip()
-        if func == "urlencode":
-            return quote_plus(value)
-        # Unknown function → leave value unchanged
-        return value
-
-    def _replace(match: re.Match[str]) -> str:
-        expr = match.group(1).strip()
-
-        # function-style: {func(var)}
-        if "(" in expr and expr.endswith(")"):
-            func_name, inner = expr.split("(", 1)
-            func_name = func_name.strip()
-            var_name = inner[:-1].strip()  # drop trailing ')'
-
-            raw_value = vars_map.get(var_name, "")
-            return _apply_func(func_name, str(raw_value))
-
-        # plain {var}
-        return str(vars_map.get(expr, ""))
-
-    return _TEMPLATE_RE.sub(_replace, template)
-
-
-
-
 class FlowNotFound(Exception):
     """Raised when a named flow cannot be found."""
     pass
-
 
 @dataclass
 class FlowStep:
@@ -369,18 +327,52 @@ def load_flow(name: str, path: Path | None = None) -> Flow:
 
 def _apply_template_functions(template: str, vars: Dict[str, Any]) -> str:
     """
-    Expand `{var}` and `{func(var)}` placeholders using a small
-    library of template functions: urlencode, upper, lower, strip.
-    Unknown functions fall back to the raw value (no transform).
+    Expand placeholders like:
+
+      {var}
+      {upper(var)}
+      {lower(var)}
+      {strip(var)}
+      {urlencode(var)}
+
+    and also function-only helpers that do *not* depend on vars:
+
+      {uuid()}           -> random UUID4 string
+      {timestamp()}      -> current UTC ISO8601 timestamp
+      {random(8)}        -> random 8-char alphanumeric string
     """
 
     def _repl(match: re.Match) -> str:
         expr = match.group(1).strip()
 
-        # func(var) form, e.g. urlencode(marker)
+        # --- 0.3.2: function-only helpers (no vars) -------------------------
+        # {uuid()}
+        if expr == "uuid()":
+            return str(uuid.uuid4())
+
+        # {timestamp()}
+        if expr == "timestamp()":
+            return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        # {random(8)} or {random()} (default length 8)
+        m_random = re.fullmatch(r"random\(\s*(\d*)\s*\)", expr)
+        if m_random:
+            length_str = m_random.group(1)
+            try:
+                length = int(length_str) if length_str else 8
+            except ValueError:
+                length = 8
+
+            # sanity clamp
+            length = max(1, min(length, 256))
+            alphabet = string.ascii_letters + string.digits
+            return "".join(secrets.choice(alphabet) for _ in range(length))
+
+        # --- Existing {var} / {func(var)} behavior --------------------------
         func_name: Optional[str] = None
         var_name = expr
 
+        # func(var) form, e.g. urlencode(marker)
         if "(" in expr and expr.endswith(")"):
             func_name, inner = expr.split("(", 1)
             func_name = func_name.strip()
@@ -477,6 +469,10 @@ async def _run_flow_async(
             #   {upper(marker)}
             #   {strip(marker)}
             #   {urlencode(marker)}
+            # and function-only helpers:
+            #   {uuid()}
+            #   {timestamp()}
+            #   {random(8)}
             def interpolate(template: Optional[str]) -> Optional[str]:
                 if template is None:
                     return None

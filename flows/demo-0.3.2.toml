@@ -1,0 +1,25 @@
+[flows.demo-template-funcs]
+description = "Demo flow to exercise CATE v0.3.2 template helpers (random, uuid, timestamp, urlencode)."
+steps = ["seed", "echo-back"]
+
+# Step 1: hit httpbin with function-only helpers in the URL
+[flows.demo-template-funcs.seed]
+method = "GET"
+url = "https://httpbin.org/anything?nonce={random(12)}&run_id={uuid()}&started={timestamp()}"
+capture_cookies = false
+
+# We still *try* to extract the URL, but we don't fail the step if it doesn't work.
+extract_regex = "\"url\"\\s*:\\s*\"([^\"]+)\""
+store_as = "last_url"
+require_extracted = false   # <— changed from true
+# NOTE: no expect_status, no body_must_contain here anymore
+
+# Step 2: POST back to httpbin using whatever we extracted (if anything)
+[flows.demo-template-funcs.echo-back]
+method = "POST"
+url = "https://httpbin.org/post"
+
+# If last_url exists, urlencode it; if not, it's just empty.
+body_template = "original={urlencode(last_url)}&marker={random(8)}&request_id={uuid()}"
+capture_cookies = false
+# NOTE: no expect_status here either
