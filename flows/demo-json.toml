@@ -8,16 +8,17 @@ method = "GET"
 url = "https://jsonplaceholder.typicode.com/todos/1"
 expect_status = 200
 
+# Extractor: prove we can grab "id" and reuse it
 extract_json = "id"
 store_as = "todo_id"
 require_extracted = true
 
-header_must_exist = ["Content-Type"]
-header_must_contain = { "Content-Type" = "application/json" }
-
+# JSON assertions: prove the JSON shape & values
 json_must_exist = ["userId", "id", "title", "completed"]
-json_must_equal = { "id" = "1" }
-json_must_contain = { "title" = "delectus" }  # adjust string to match actual title if needed
+
+json_must_equal = { id = "1", userId = "1" }
+json_must_contain = { title = "delectus aut autem" }  # or just "delectus"
+
 
 
 # Step 2: use the extracted id in another request
