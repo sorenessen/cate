@@ -50,6 +50,11 @@ class FlowStep:
     header_must_exist: Optional[List[str]] = None        # e.g. ["Content-Type", "ETag"]
     header_must_contain: Optional[Dict[str, str]] = None # e.g. { "Content-Type" = "application/json" }
 
+    # JSON assertions (v0.3.4)
+    json_must_exist: Optional[List[str]] = None          # e.g. ["data.id", "data.user.email"]
+    json_must_equal: Optional[Dict[str, str]] = None     # e.g. { "completed" = "false" }
+    json_must_contain: Optional[Dict[str, str]] = None   # e.g. { "title" = "delectus" }
+
 
 @dataclass
 class Flow:
@@ -164,6 +169,27 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                     str(k): str(v) for k, v in raw_header_must_contain.items()
                 }
 
+            raw_json_must_exist = raw.get("json_must_exist")
+            json_must_exist: Optional[List[str]] = None
+            if isinstance(raw_json_must_exist, str):
+                json_must_exist = [raw_json_must_exist]
+            elif isinstance(raw_json_must_exist, list):
+                json_must_exist = [str(p) for p in raw_json_must_exist]
+
+            raw_json_must_equal = raw.get("json_must_equal")
+            json_must_equal: Optional[Dict[str, str]] = None
+            if isinstance(raw_json_must_equal, dict):
+                json_must_equal = {
+                    str(k): str(v) for k, v in raw_json_must_equal.items()
+                }
+
+            raw_json_must_contain = raw.get("json_must_contain")
+            json_must_contain: Optional[Dict[str, str]] = None
+            if isinstance(raw_json_must_contain, dict):
+                json_must_contain = {
+                    str(k): str(v) for k, v in raw_json_must_contain.items()
+                }
+
             step = FlowStep(
                 name=step_name,
                 method=method,
@@ -183,6 +209,9 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 require_extracted=bool(raw.get("require_extracted", False)),
                 header_must_exist=header_must_exist,
                 header_must_contain=header_must_contain,
+                json_must_exist=json_must_exist,
+                json_must_equal=json_must_equal,
+                json_must_contain=json_must_contain,
             )
 
 
@@ -391,7 +420,7 @@ async def _run_flow_async(
                 size = len(resp.content)
                 body_text: Optional[str] = None  # lazy
                 headers_dict: Dict[str, str] = dict(resp.headers)
-
+                
                 ok = True
                 error_msg_parts: List[str] = []
                 assertions: Dict[str, bool] = {}
@@ -487,15 +516,37 @@ async def _run_flow_async(
                 extracted_var = None
                 extracted_value = None
 
-                # Helper: simple JSON path extractor
-                # Path syntax: "data.token", "items[0].id", "outer.inner[2].value"
+                # --- JSON helpers (used by JSON assertions and extract_json) ---
+                json_obj: Any = None
+                json_parsed: bool = False
+
+                def _ensure_json_loaded() -> Optional[Any]:
+                    nonlocal json_obj, json_parsed, body_text
+                    if json_parsed:
+                        return json_obj
+                    if body_text is None:
+                        body_text = resp.text
+                    try:
+                        json_obj = resp.json()
+                    except Exception:
+                        json_obj = None
+                    json_parsed = True
+                    return json_obj
+
                 def _extract_json_path(obj: Any, path: str) -> Any:
+                    """
+                    Simple dotted path with optional [index], e.g.:
+                      "id"
+                      "data.token"
+                      "items[0].id"
+                      "outer.inner[2].value"
+                    """
                     current = obj
                     for segment in path.split("."):
                         if not isinstance(current, (dict, list)):
                             return None
 
-                        # Match key and optional [index]
+                        # Match "key" or "key[0]"
                         m_seg = re.match(r"^([^\[\]]+)(\[(\d+)\])?$", segment)
                         if not m_seg:
                             return None
@@ -503,16 +554,14 @@ async def _run_flow_async(
                         key = m_seg.group(1)
                         idx_str = m_seg.group(3)
 
-                        # Descend by key if current is a dict
                         if isinstance(current, dict):
                             if key not in current:
                                 return None
                             current = current[key]
                         else:
-                            # Trying to use a dict-style key on a list – not supported
+                            # trying to use a dict-style key on a list
                             return None
 
-                        # Optional list index
                         if idx_str is not None:
                             if not isinstance(current, list):
                                 return None
@@ -523,14 +572,74 @@ async def _run_flow_async(
 
                     return current
 
+                # --- JSON assertions (optional) ---
+                needs_json_assertions = (
+                    (step.json_must_exist and len(step.json_must_exist) > 0)
+                    or (step.json_must_equal and len(step.json_must_equal) > 0)
+                    or (step.json_must_contain and len(step.json_must_contain) > 0)
+                )
+
+                if needs_json_assertions:
+                    obj = _ensure_json_loaded()
+                    if obj is None:
+                        assertions["json_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            "failed to parse JSON body for JSON assertions"
+                        )
+                    else:
+                        json_errors: List[str] = []
+
+                        # Existence checks
+                        if step.json_must_exist:
+                            for path in step.json_must_exist:
+                                val = _extract_json_path(obj, path)
+                                if val is None:
+                                    json_errors.append(f"missing JSON path {path!r}")
+
+                        # Equality checks
+                        if step.json_must_equal:
+                            for path, expected in step.json_must_equal.items():
+                                val = _extract_json_path(obj, path)
+                                if val is None:
+                                    json_errors.append(
+                                        f"JSON path {path!r} not found for equality check"
+                                    )
+                                else:
+                                    if str(val) != str(expected):
+                                        json_errors.append(
+                                            f"JSON path {path!r} = {val!r} != expected {expected!r}"
+                                        )
+
+                        # Contains checks (substring)
+                        if step.json_must_contain:
+                            for path, expected in step.json_must_contain.items():
+                                val = _extract_json_path(obj, path)
+                                if val is None:
+                                    json_errors.append(
+                                        f"JSON path {path!r} not found for contain check"
+                                    )
+                                else:
+                                    if str(expected) not in str(val):
+                                        json_errors.append(
+                                            f"JSON path {path!r} value {val!r} does not contain {expected!r}"
+                                        )
+
+                        if json_errors:
+                            assertions["json_ok"] = False
+                            ok = False
+                            error_msg_parts.append(
+                                "JSON assertion failures: " + "; ".join(json_errors)
+                            )
+                        else:
+                            assertions["json_ok"] = True
+
+                # --- Extractors (JSON > regex > header) ---
+
                 # Prefer JSON extractor if configured
                 if step.extract_json and step.store_as:
-                    if body_text is None:
-                        body_text = resp.text
-
-                    try:
-                        json_obj = resp.json()
-                    except Exception:
+                    obj = _ensure_json_loaded()
+                    if obj is None:
                         assertions["extracted_ok"] = False
                         if step.require_extracted:
                             ok = False
@@ -538,7 +647,7 @@ async def _run_flow_async(
                                 f"failed to parse JSON body for extract_json path {step.extract_json!r}"
                             )
                     else:
-                        extracted = _extract_json_path(json_obj, step.extract_json)
+                        extracted = _extract_json_path(obj, step.extract_json)
                         if extracted is not None:
                             extracted_value = extracted
                             extracted_var = step.store_as
@@ -572,7 +681,6 @@ async def _run_flow_async(
 
                 # Fallback: header extractor (only if no JSON/regex extractor)
                 elif step.extract_header and step.store_as:
-                    # Case-insensitive header lookup
                     target_name = step.extract_header.lower()
                     header_value = None
                     for hk, hv in headers_dict.items():
@@ -591,26 +699,6 @@ async def _run_flow_async(
                             ok = False
                             error_msg_parts.append(
                                 f"failed to extract header '{step.extract_header}' into '{step.store_as}'"
-                            )
-
-
-                # Fallback: regex extractor (only if no extract_json)
-                elif step.extract_regex and step.store_as:
-                    if body_text is None:
-                        body_text = resp.text
-                    m = re.search(step.extract_regex, body_text, flags=re.DOTALL)
-                    if m:
-                        # use first capturing group if present, else the whole match
-                        extracted_value = m.group(1) if m.groups() else m.group(0)
-                        extracted_var = step.store_as
-                        state["vars"][step.store_as] = extracted_value
-                        assertions["extracted_ok"] = True
-                    else:
-                        assertions["extracted_ok"] = False
-                        if step.require_extracted:
-                            ok = False
-                            error_msg_parts.append(
-                                f"failed to extract '{step.store_as}' with regex {step.extract_regex!r}"
                             )
 
 
