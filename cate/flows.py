@@ -40,10 +40,12 @@ class FlowStep:
     stop_on_fail: bool = False
 
     # Variables / extractors (v0.3.1 / v0.3.3)
-    extract_regex: Optional[str] = None     # regex-based extractor
+    extract_regex: Optional[str] = None     # regex-based extractor (body)
     extract_json: Optional[str] = None      # JSON path extractor, e.g. "data.items[0].token"
+    extract_header: Optional[str] = None    # header extractor, e.g. "Set-Cookie"
     store_as: Optional[str] = None
     require_extracted: bool = False
+
 
 
 @dataclass
@@ -159,9 +161,11 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 stop_on_fail=bool(raw.get("stop_on_fail", False)),
                 extract_regex=raw.get("extract_regex"),
                 extract_json=raw.get("extract_json"),
+                extract_header=raw.get("extract_header"),
                 store_as=raw.get("store_as"),
                 require_extracted=bool(raw.get("require_extracted", False)),
             )
+
             steps.append(step)
 
         if steps:
@@ -366,6 +370,7 @@ async def _run_flow_async(
                 status = resp.status_code
                 size = len(resp.content)
                 body_text: Optional[str] = None  # lazy
+                headers_dict: Dict[str, str] = dict(resp.headers)
 
                 ok = True
                 error_msg_parts: List[str] = []
@@ -459,7 +464,6 @@ async def _run_flow_async(
 
                 # Prefer JSON extractor if configured
                 if step.extract_json and step.store_as:
-                    # Make sure we have the body text (for logging) and parse JSON
                     if body_text is None:
                         body_text = resp.text
 
@@ -486,6 +490,48 @@ async def _run_flow_async(
                                 error_msg_parts.append(
                                     f"failed to extract '{step.store_as}' from JSON path {step.extract_json!r}"
                                 )
+
+                # Fallback: regex extractor (only if no extract_json)
+                elif step.extract_regex and step.store_as:
+                    if body_text is None:
+                        body_text = resp.text
+                    m = re.search(step.extract_regex, body_text, flags=re.DOTALL)
+                    if m:
+                        extracted_value = m.group(1) if m.groups() else m.group(0)
+                        extracted_var = step.store_as
+                        state["vars"][step.store_as] = extracted_value
+                        assertions["extracted_ok"] = True
+                    else:
+                        assertions["extracted_ok"] = False
+                        if step.require_extracted:
+                            ok = False
+                            error_msg_parts.append(
+                                f"failed to extract '{step.store_as}' with regex {step.extract_regex!r}"
+                            )
+
+                # Fallback: header extractor (only if no JSON/regex extractor)
+                elif step.extract_header and step.store_as:
+                    # Case-insensitive header lookup
+                    target_name = step.extract_header.lower()
+                    header_value = None
+                    for hk, hv in headers_dict.items():
+                        if hk.lower() == target_name:
+                            header_value = hv
+                            break
+
+                    if header_value is not None:
+                        extracted_value = header_value
+                        extracted_var = step.store_as
+                        state["vars"][step.store_as] = extracted_value
+                        assertions["extracted_ok"] = True
+                    else:
+                        assertions["extracted_ok"] = False
+                        if step.require_extracted:
+                            ok = False
+                            error_msg_parts.append(
+                                f"failed to extract header '{step.extract_header}' into '{step.store_as}'"
+                            )
+
 
                 # Fallback: regex extractor (only if no extract_json)
                 elif step.extract_regex and step.store_as:
@@ -534,6 +580,7 @@ async def _run_flow_async(
                         "extracted_value": extracted_value,
                         "headers": headers or {},
                         "body": body_for_log,
+                        "response_headers": headers_dict,
                     }
                 )
 
@@ -554,6 +601,7 @@ async def _run_flow_async(
                         "extracted_value": None,
                         "headers": headers or {},
                         "body": None,
+                        "response_headers": headers_dict,
                     }
                 )
 
