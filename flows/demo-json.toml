@@ -24,6 +24,27 @@ method = "GET"
 url = "https://jsonplaceholder.typicode.com/todos/{todo_id}"
 expect_status = 200
 
+# headers extract flows
+
+[flows.demo-header-extract]
+description = "Demo: extract a header and reuse it."
+steps = ["head-todo", "use-etag"]
+
+# Step 1: head request to get headers only
+[flows.demo-header-extract.head-todo]
+method = "HEAD"
+url = "https://jsonplaceholder.typicode.com/todos/1"
+expect_status = 200
+extract_header = "ETag"
+store_as = "etag"
+require_extracted = true
+
+[flows.demo-header-extract.use-etag]
+method = "GET"
+url = "https://jsonplaceholder.typicode.com/todos/1"
+# expect_status = 200 Temporarily Disabled Expectation
+headers = { "If-None-Match" = "{etag}" }
+
 
 # [flows.demo-json-token]
 # description = "Demo: extract token from JSON and reuse it."
