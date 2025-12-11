@@ -365,9 +365,12 @@ def write_flow_logs(
       - <output_prefix>.stepN_<name>.body.txt : (optional) response bodies
         for failing steps when save_body=True
     """
-    base = Path(output_prefix)
-    jsonl_path = Path(f"logs/{output_prefix}.jsonl")
-    summary_md_path = Path(f"logs/{output_prefix}.summary.md")
+    jsonl_path = Path(f"{output_prefix}.jsonl")
+    summary_md_path = Path(f"{output_prefix}.summary.md")
+
+    # Ensure parent directory exists (e.g. "logs/")
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+
 
     # JSONL: one line per step (unchanged)
     with jsonl_path.open("w", encoding="utf-8") as f:
@@ -539,6 +542,9 @@ def write_flow_logs(
             html_capture = Path(f"{output_prefix}.step{idx}_{safe_step}.body.html")
 
             try:
+                # Ensure directory exists for body dumps
+                body_path.parent.mkdir(parents=True, exist_ok=True)
+
                 # Always write plain text body for grepping / diffing
                 body_path.write_text(body, encoding="utf-8")
 

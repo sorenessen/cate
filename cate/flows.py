@@ -39,8 +39,9 @@ class FlowStep:
     body_must_not_contain: Optional[str] = None
     stop_on_fail: bool = False
 
-    # Variables / extractors (v0.3.1)
-    extract_regex: Optional[str] = None
+    # Variables / extractors (v0.3.1 / v0.3.3)
+    extract_regex: Optional[str] = None     # regex-based extractor
+    extract_json: Optional[str] = None      # JSON path extractor, e.g. "data.items[0].token"
     store_as: Optional[str] = None
     require_extracted: bool = False
 
@@ -50,152 +51,6 @@ class Flow:
     name: str
     description: str
     steps: List[FlowStep]
-
-
-# def _load_flows_file(path: Path, visited: Optional[Set[Path]] = None) -> Dict[str, Any]:
-#     """
-#     Recursive loader for flows TOML with a simple `include` mechanism.
-
-#     Each file can optionally declare:
-
-#         include = ["relative/path1.toml", "relative/path2.toml"]
-
-#     All [flows.*] tables from included files are merged, with *later* files
-#     overriding earlier ones on name collisions.
-#     """
-#     if visited is None:
-#         visited = set()
-
-#     path = path.resolve()
-#     if path in visited:
-#         # Prevent include cycles
-#         return {"flows": {}}
-
-#     visited.add(path)
-
-#     if not path.exists():
-#         raise FileNotFoundError(f"No flows file found at {path!s}")
-
-#     text = path.read_text(encoding="utf-8")
-#     data = tomllib.loads(text)
-
-#     combined: Dict[str, Any] = {"flows": {}}
-
-#     # 1) Process includes first (so this file can override them if desired)
-#     includes = data.get("include", [])
-#     if isinstance(includes, str):
-#         includes = [includes]
-
-#     if isinstance(includes, list):
-#         for inc in includes:
-#             inc_path = (path.parent / inc).resolve()
-#             inc_data = _load_flows_file(inc_path, visited)
-#             inc_flows = inc_data.get("flows", {})
-#             if isinstance(inc_flows, dict):
-#                 combined["flows"].update(inc_flows)
-
-#     # 2) Merge this file's own [flows.*] tables
-#     flows_section = data.get("flows", {})
-#     if isinstance(flows_section, dict):
-#         combined["flows"].update(flows_section)
-
-#     return combined
-
-
-# def load_flows(path: Path | None = None) -> Dict[str, Flow]:
-#     """
-#     Load all flows from a TOML file, with support for `include`.
-
-#     Expected shape in flows.toml:
-
-#         include = ["flows/demo-flows.toml"]
-
-#         [flows.my-flow]
-#         description = "..."
-#         steps = ["login", "dashboard"]
-
-#         [flows.my-flow.login]
-#         method = "POST"
-#         url = "https://example.com/login"
-#         body_template = "user=admin&pass={password}"
-#         capture_cookies = true
-
-#         [flows.my-flow.dashboard]
-#         method = "GET"
-#         url = "https://example.com/dashboard"
-#         expect_status = 200
-#     """
-#     if path is None:
-#         path = Path("flows.toml")
-#     else:
-#         path = Path(path)
-
-#     data = _load_flows_file(path)
-
-#     flows_section = data.get("flows", {})
-#     if not isinstance(flows_section, dict):
-#         raise ValueError("flows.toml (and included files) must contain a [flows] table.")
-
-#     flows: Dict[str, Flow] = {}
-
-#     for flow_name, cfg in flows_section.items():
-#         if not isinstance(cfg, dict):
-#             continue
-
-#         description = cfg.get("description", "")
-#         steps_order = cfg.get("steps", [])
-#         if not isinstance(steps_order, list) or not steps_order:
-#             # Require explicit step order
-#             continue
-
-#         # Gather step definitions from nested tables
-#         step_defs: Dict[str, Any] = {}
-#         for key, value in cfg.items():
-#             if isinstance(value, dict) and key not in ("steps", "description"):
-#                 step_defs[key] = value
-
-#         steps: List[FlowStep] = []
-#         for step_name in steps_order:
-#             raw = step_defs.get(step_name)
-#             if not isinstance(raw, dict):
-#                 # skip unknown / malformed step
-#                 continue
-#             method = str(raw.get("method", "GET")).upper()
-#             url = str(raw.get("url", ""))
-#             if not url:
-#                 continue
-
-#             raw_headers = raw.get("headers")
-#             headers: Optional[Dict[str, str]] = None
-#             if isinstance(raw_headers, dict):
-#                 headers = {str(k): str(v) for k, v in raw_headers.items()}
-
-#             step = FlowStep(
-#                 name=step_name,
-#                 method=method,
-#                 url=url,
-#                 body_template=raw.get("body_template"),
-#                 capture_cookies=bool(raw.get("capture_cookies", False)),
-#                 expect_status=raw.get("expect_status"),
-#                 headers=headers,
-#                 max_latency_ms=raw.get("max_latency_ms"),
-#                 body_must_contain=raw.get("body_must_contain"),
-#                 body_must_not_contain=raw.get("body_must_not_contain"),
-#                 stop_on_fail=bool(raw.get("stop_on_fail", False)),
-#                 extract_regex=raw.get("extract_regex"),
-#                 store_as=raw.get("store_as"),
-#                 require_extracted=bool(raw.get("require_extracted", False)),
-#             )
-#             steps.append(step)
-
-#         if steps:
-#             flows[flow_name] = Flow(
-#                 name=flow_name,
-#                 description=description,
-#                 steps=steps,
-#             )
-
-#     return flows
 
 def load_flows(path: Path | None = None) -> Dict[str, Flow]:
     """
@@ -303,6 +158,7 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 body_must_not_contain=raw.get("body_must_not_contain"),
                 stop_on_fail=bool(raw.get("stop_on_fail", False)),
                 extract_regex=raw.get("extract_regex"),
+                extract_json=raw.get("extract_json"),
                 store_as=raw.get("store_as"),
                 require_extracted=bool(raw.get("require_extracted", False)),
             )
@@ -564,7 +420,75 @@ async def _run_flow_async(
                 # Extractor / variable assertion
                 extracted_var = None
                 extracted_value = None
-                if step.extract_regex and step.store_as:
+
+                # Helper: simple JSON path extractor
+                # Path syntax: "data.token", "items[0].id", "outer.inner[2].value"
+                def _extract_json_path(obj: Any, path: str) -> Any:
+                    current = obj
+                    for segment in path.split("."):
+                        if not isinstance(current, (dict, list)):
+                            return None
+
+                        # Match key and optional [index]
+                        m_seg = re.match(r"^([^\[\]]+)(\[(\d+)\])?$", segment)
+                        if not m_seg:
+                            return None
+
+                        key = m_seg.group(1)
+                        idx_str = m_seg.group(3)
+
+                        # Descend by key if current is a dict
+                        if isinstance(current, dict):
+                            if key not in current:
+                                return None
+                            current = current[key]
+                        else:
+                            # Trying to use a dict-style key on a list – not supported
+                            return None
+
+                        # Optional list index
+                        if idx_str is not None:
+                            if not isinstance(current, list):
+                                return None
+                            idx = int(idx_str)
+                            if idx < 0 or idx >= len(current):
+                                return None
+                            current = current[idx]
+
+                    return current
+
+                # Prefer JSON extractor if configured
+                if step.extract_json and step.store_as:
+                    # Make sure we have the body text (for logging) and parse JSON
+                    if body_text is None:
+                        body_text = resp.text
+
+                    try:
+                        json_obj = resp.json()
+                    except Exception:
+                        assertions["extracted_ok"] = False
+                        if step.require_extracted:
+                            ok = False
+                            error_msg_parts.append(
+                                f"failed to parse JSON body for extract_json path {step.extract_json!r}"
+                            )
+                    else:
+                        extracted = _extract_json_path(json_obj, step.extract_json)
+                        if extracted is not None:
+                            extracted_value = extracted
+                            extracted_var = step.store_as
+                            state["vars"][step.store_as] = extracted_value
+                            assertions["extracted_ok"] = True
+                        else:
+                            assertions["extracted_ok"] = False
+                            if step.require_extracted:
+                                ok = False
+                                error_msg_parts.append(
+                                    f"failed to extract '{step.store_as}' from JSON path {step.extract_json!r}"
+                                )
+
+                # Fallback: regex extractor (only if no extract_json)
+                elif step.extract_regex and step.store_as:
                     if body_text is None:
                         body_text = resp.text
                     m = re.search(step.extract_regex, body_text, flags=re.DOTALL)
@@ -581,6 +505,7 @@ async def _run_flow_async(
                             error_msg_parts.append(
                                 f"failed to extract '{step.store_as}' with regex {step.extract_regex!r}"
                             )
+
 
                 error_msg = "; ".join(error_msg_parts) if error_msg_parts else None
 
