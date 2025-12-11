@@ -18,6 +18,10 @@ extract_json = "id"
 store_as = "todo_id"
 require_extracted = true
 
+# Header assertions
+header_must_exist = ["Content-Type"]
+header_must_contain = { "Content-Type" = "application/json" }
+
 # Step 2: use the extracted id in another request
 [flows.demo-json-token.use-id]
 method = "GET"
@@ -44,7 +48,6 @@ method = "GET"
 url = "https://jsonplaceholder.typicode.com/todos/1"
 # expect_status = 200 Temporarily Disabled Expectation
 headers = { "If-None-Match" = "{etag}" }
-
 
 # [flows.demo-json-token]
 # description = "Demo: extract token from JSON and reuse it."

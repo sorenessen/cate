@@ -46,6 +46,9 @@ class FlowStep:
     store_as: Optional[str] = None
     require_extracted: bool = False
 
+    # Header assertions (v0.3.3)
+    header_must_exist: Optional[List[str]] = None        # e.g. ["Content-Type", "ETag"]
+    header_must_contain: Optional[Dict[str, str]] = None # e.g. { "Content-Type" = "application/json" }
 
 
 @dataclass
@@ -147,6 +150,20 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
             if isinstance(raw_headers, dict):
                 headers = {str(k): str(v) for k, v in raw_headers.items()}
 
+            raw_header_must_exist = raw.get("header_must_exist")
+            header_must_exist: Optional[List[str]] = None
+            if isinstance(raw_header_must_exist, str):
+                header_must_exist = [raw_header_must_exist]
+            elif isinstance(raw_header_must_exist, list):
+                header_must_exist = [str(h) for h in raw_header_must_exist]
+
+            raw_header_must_contain = raw.get("header_must_contain")
+            header_must_contain: Optional[Dict[str, str]] = None
+            if isinstance(raw_header_must_contain, dict):
+                header_must_contain = {
+                    str(k): str(v) for k, v in raw_header_must_contain.items()
+                }
+
             step = FlowStep(
                 name=step_name,
                 method=method,
@@ -164,7 +181,10 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 extract_header=raw.get("extract_header"),
                 store_as=raw.get("store_as"),
                 require_extracted=bool(raw.get("require_extracted", False)),
+                header_must_exist=header_must_exist,
+                header_must_contain=header_must_contain,
             )
+
 
             steps.append(step)
 
@@ -421,6 +441,47 @@ async def _run_flow_async(
                         )
                     else:
                         assertions["body_not_contains_ok"] = True
+
+                # Header assertions
+                if step.header_must_exist:
+                    missing: List[str] = []
+                    for name in step.header_must_exist:
+                        target = str(name).lower()
+                        found = any(h.lower() == target for h in headers_dict.keys())
+                        if not found:
+                            missing.append(str(name))
+
+                    if missing:
+                        assertions["headers_exist_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            f"missing required header(s): {', '.join(missing)}"
+                        )
+                    else:
+                        assertions["headers_exist_ok"] = True
+
+                if step.header_must_contain:
+                    bad: List[str] = []
+                    for name, expected in step.header_must_contain.items():
+                        target = name.lower()
+                        value = None
+                        for hk, hv in headers_dict.items():
+                            if hk.lower() == target:
+                                value = hv
+                                break
+
+                        if value is None or str(expected) not in str(value):
+                            bad.append(f"{name!r} !~ {expected!r}")
+
+                    if bad:
+                        assertions["headers_contain_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            "header content mismatch: " + ", ".join(bad)
+                        )
+                    else:
+                        assertions["headers_contain_ok"] = True
+
 
                 # Extractor / variable assertion
                 extracted_var = None
