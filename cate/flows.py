@@ -56,6 +56,14 @@ class FlowStep:
     json_must_equal: Optional[Dict[str, str]] = None     # e.g. { "completed" = "false" }
     json_must_contain: Optional[Dict[str, str]] = None   # e.g. { "title" = "delectus" }
 
+    # Cookie extractors / assertions (v0.3.4)
+    extract_cookie: Optional[str] = None          # cookie name, e.g. "sessionid"
+    cookie_strategy: Optional[str] = None         # "first" | "last" | "all" (default "last")
+
+    cookie_must_exist: Optional[List[str]] = None
+    cookie_must_equal: Optional[Dict[str, str]] = None
+    cookie_must_contain: Optional[Dict[str, str]] = None
+
 
 @dataclass
 class Flow:
@@ -199,6 +207,28 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                     str(k): str(v) for k, v in raw_json_must_contain.items()
                 }
 
+            extract_cookie = raw.get("extract_cookie")
+            cookie_strategy = raw.get("cookie_strategy")
+
+            # cookie_must_exist can be string or list
+            raw_cookie_must_exist = raw.get("cookie_must_exist")
+            cookie_must_exist: Optional[List[str]] = None
+            if isinstance(raw_cookie_must_exist, str):
+                cookie_must_exist = [raw_cookie_must_exist]
+            elif isinstance(raw_cookie_must_exist, list):
+                cookie_must_exist = [str(x) for x in raw_cookie_must_exist]
+
+            raw_cookie_must_equal = raw.get("cookie_must_equal")
+            cookie_must_equal: Optional[Dict[str, str]] = None
+            if isinstance(raw_cookie_must_equal, dict):
+                cookie_must_equal = {str(k): str(v) for k, v in raw_cookie_must_equal.items()}
+
+            raw_cookie_must_contain = raw.get("cookie_must_contain")
+            cookie_must_contain: Optional[Dict[str, str]] = None
+            if isinstance(raw_cookie_must_contain, dict):
+                cookie_must_contain = {str(k): str(v) for k, v in raw_cookie_must_contain.items()}
+
+
             step = FlowStep(
                 name=step_name,
                 method=method,
@@ -222,6 +252,12 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 json_must_exist=json_must_exist,
                 json_must_equal=json_must_equal,
                 json_must_contain=json_must_contain,
+                extract_cookie=extract_cookie,
+                cookie_strategy=cookie_strategy,
+                cookie_must_exist=cookie_must_exist,
+                cookie_must_equal=cookie_must_equal,
+                cookie_must_contain=cookie_must_contain,
+
             )
 
 
@@ -371,7 +407,12 @@ async def _run_flow_async(
 
     results: List[Dict[str, Any]] = []
 
-    async with httpx.AsyncClient(timeout=timeout, cookies=state["cookies"]) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        cookies=state["cookies"],
+        follow_redirects=True,
+    ) as client:
+
         last_start = 0.0
 
         for step in flow.steps:
@@ -546,6 +587,54 @@ async def _run_flow_async(
                         )
                     else:
                         assertions["headers_equal_ok"] = True
+
+                # Cookie assertions (checks current cookie jar state)
+                if step.cookie_must_exist:
+                    missing: List[str] = []
+                    for name in step.cookie_must_exist:
+                        if client.cookies.get(str(name)) is None:
+                            missing.append(str(name))
+                    if missing:
+                        assertions["cookies_exist_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            f"missing required cookie(s): {', '.join(missing)}"
+                        )
+                    else:
+                        assertions["cookies_exist_ok"] = True
+
+                if step.cookie_must_contain:
+                    bad: List[str] = []
+                    for name, expected in step.cookie_must_contain.items():
+                        val = client.cookies.get(str(name))
+                        if val is None or str(expected) not in str(val):
+                            bad.append(f"{name!r} !~ {expected!r}")
+                    if bad:
+                        assertions["cookies_contain_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            "cookie content mismatch: " + ", ".join(bad)
+                        )
+                    else:
+                        assertions["cookies_contain_ok"] = True
+
+                if step.cookie_must_equal:
+                    bad: List[str] = []
+                    for name, expected in step.cookie_must_equal.items():
+                        val = client.cookies.get(str(name))
+                        if val is None:
+                            bad.append(f"{name!r} missing for equality check")
+                        elif str(val) != str(expected):
+                            bad.append(f"{name!r} = {val!r} != expected {expected!r}")
+                    if bad:
+                        assertions["cookies_equal_ok"] = False
+                        ok = False
+                        error_msg_parts.append(
+                            "cookie equality mismatch: " + ", ".join(bad)
+                        )
+                    else:
+                        assertions["cookies_equal_ok"] = True
+
 
 
                 # Extractor / variable assertion
@@ -761,6 +850,48 @@ async def _run_flow_async(
                                 f"failed to extract header '{step.extract_header}' into '{step.store_as}'"
                             )
 
+                # Fallback: cookie extractor (only if no JSON/regex/header extractor)
+                elif step.extract_cookie and step.store_as:
+                    cookie_name = str(step.extract_cookie)
+                    strategy = (step.cookie_strategy or "last").strip().lower()
+
+                    # Pull matching Set-Cookie headers
+                    values: List[str] = []
+                    try:
+                        set_cookie_headers = resp.headers.get_list("set-cookie")
+                    except Exception:
+                        set_cookie_headers = []
+
+                    for raw_sc in set_cookie_headers:
+                        # raw_sc looks like: "sessionid=abc123; Path=/; HttpOnly"
+                        prefix = cookie_name + "="
+                        if raw_sc.startswith(prefix):
+                            value_part = raw_sc[len(prefix):]
+                            value = value_part.split(";", 1)[0]
+                            values.append(value)
+
+                    selected: Any = None
+                    if values:
+                        if strategy == "first":
+                            selected = values[0]
+                        elif strategy == "all":
+                            selected = values
+                        else:
+                            # default "last"
+                            selected = values[-1]
+
+                    if selected is not None:
+                        extracted_value = selected
+                        extracted_var = step.store_as
+                        state["vars"][step.store_as] = extracted_value
+                        assertions["extracted_ok"] = True
+                    else:
+                        assertions["extracted_ok"] = False
+                        if step.require_extracted:
+                            ok = False
+                            error_msg_parts.append(
+                                f"failed to extract cookie {cookie_name!r} (strategy={strategy!r}) into '{step.store_as}'"
+                            )
 
                 error_msg = "; ".join(error_msg_parts) if error_msg_parts else None
 
