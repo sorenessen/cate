@@ -1,0 +1,23 @@
+[flows.demo-cookie]
+description = "Demo: set a cookie, assert it exists, extract it (first/last)."
+steps = ["set", "check"]
+
+[flows.demo-cookie.set]
+method = "GET"
+url = "https://httpbingo.org/cookies/set?sessionid=abc123"
+expect_status = 200
+stop_on_fail = true
+
+cookie_must_exist = ["sessionid"]
+
+[flows.demo-cookie.check]
+method = "GET"
+url = "https://httpbingo.org/cookies"
+expect_status = 200
+
+# Assert cookie still present in jar
+cookie_must_exist = ["sessionid"]
+cookie_must_contain = { "sessionid" = "abc" }
+
+# Extract cookie from Set-Cookie (if the endpoint sets again; otherwise this will be false)
+# If this endpoint doesn't return Set-Cookie, make this step just do assertions, or use another endpoint that sets multiple cookies.
