@@ -555,17 +555,20 @@ async def _run_flow_async(
                 # --- JSON helpers (used by JSON assertions and extract_json) ---
                 json_obj: Any = None
                 json_parsed: bool = False
+                json_parse_error: Optional[str] = None
 
                 def _ensure_json_loaded() -> Optional[Any]:
-                    nonlocal json_obj, json_parsed, body_text
+                    nonlocal json_obj, json_parsed, json_parse_error, body_text
                     if json_parsed:
                         return json_obj
                     if body_text is None:
                         body_text = resp.text
                     try:
                         json_obj = resp.json()
-                    except Exception:
+                        json_parse_error = None
+                    except Exception as exc:
                         json_obj = None
+                        json_parse_error = str(exc)
                     json_parsed = True
                     return json_obj
 
@@ -620,9 +623,10 @@ async def _run_flow_async(
                     if obj is None:
                         assertions["json_ok"] = False
                         ok = False
-                        error_msg_parts.append(
-                            "failed to parse JSON body for JSON assertions"
-                        )
+                        msg = "failed to parse JSON body for JSON assertions"
+                        if json_parse_error:
+                            msg += f" ({json_parse_error})"
+                        error_msg_parts.append(msg)
                     else:
                         json_errors: List[str] = []
 
@@ -631,8 +635,17 @@ async def _run_flow_async(
                             for path in step.json_must_exist:
                                 val = _extract_json_path(obj, path)
                                 if val is None:
-                                    json_errors.append(f"missing JSON path {path!r}")
-
+                                    # add top-level key hint if we can
+                                    extra = ""
+                                    if isinstance(obj, dict):
+                                        keys = list(obj.keys())
+                                        if keys:
+                                            top_keys = ", ".join(repr(k) for k in keys[:8])
+                                            extra = f" (top-level keys: {top_keys})"
+                                    json_errors.append(
+                                        f"missing JSON path {path!r}{extra}"
+                                    )
+                        
                         # Equality checks
                         if step.json_must_equal:
                             for path, expected in step.json_must_equal.items():
@@ -679,9 +692,13 @@ async def _run_flow_async(
                         assertions["extracted_ok"] = False
                         if step.require_extracted:
                             ok = False
-                            error_msg_parts.append(
-                                f"failed to parse JSON body for extract_json path {step.extract_json!r}"
+                            msg = (
+                                f"failed to parse JSON body for extract_json path "
+                                f"{step.extract_json!r}"
                             )
+                            if json_parse_error:
+                                msg += f" ({json_parse_error})"
+                            error_msg_parts.append(msg)
                     else:
                         extracted = _extract_json_path(obj, step.extract_json)
                         if extracted is not None:
@@ -693,8 +710,15 @@ async def _run_flow_async(
                             assertions["extracted_ok"] = False
                             if step.require_extracted:
                                 ok = False
+                                extra = ""
+                                if isinstance(obj, dict):
+                                    keys = list(obj.keys())
+                                    if keys:
+                                        top_keys = ", ".join(repr(k) for k in keys[:8])
+                                        extra = f" (top-level keys: {top_keys})"
                                 error_msg_parts.append(
-                                    f"failed to extract '{step.store_as}' from JSON path {step.extract_json!r}"
+                                    f"failed to extract '{step.store_as}' from JSON path "
+                                    f"{step.extract_json!r}{extra}"
                                 )
 
                 # Fallback: regex extractor (only if no extract_json)
