@@ -47,22 +47,3 @@ method = "GET"
 url = "https://jsonplaceholder.typicode.com/todos/1"
 # expect_status = 200 Temporarily Disabled Expectation
 headers = { "If-None-Match" = "{etag}" }
-
-# [flows.demo-json-token]
-# description = "Demo: extract token from JSON and reuse it."
-# steps = ["get-token", "use-token"]
-
-# [flows.demo-json-token.get-token]
-# method = "GET"
-# url = "https://example.com/api/login-demo"
-# expect_status = 200
-# # Suppose the JSON looks like: { "data": { "token": "abc123" } }
-# extract_json = "data.token"
-# store_as = "api_token"
-# require_extracted = true
-
-# [flows.demo-json-token.use-token]
-# method = "GET"
-# url = "https://example.com/api/profile"
-# expect_status = 200
-# headers = { "Authorization" = "Bearer {api_token}" }
