@@ -1,0 +1,19 @@
+[flows.demo-header-assert]
+description = "Header assertion demo"
+steps = ["head", "assert"]
+
+[flows.demo-header-assert.head]
+method = "HEAD"
+url = "https://jsonplaceholder.typicode.com/todos/1"
+capture_cookies = false
+expect_status = 200
+
+[flows.demo-header-assert.assert]
+method = "GET"
+url = "https://jsonplaceholder.typicode.com/todos/1"
+capture_cookies = false
+expect_status = 200
+
+header_must_exist = ["Content-Type"]
+header_must_contain = { "Content-Type" = "application/json" }
+header_must_equal  = { "Content-Type" = "application/json; charset=utf-8" }
