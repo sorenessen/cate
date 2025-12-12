@@ -1,0 +1,13 @@
+[flows.demo-retry-timeout]
+description = "Demo: verify retries on timeout."
+steps = ["slow"]
+
+[flows.demo-retry-timeout.slow]
+method = "GET"
+url = "https://httpbingo.org/delay/3"
+expect_status = 200
+
+retry_count = 2
+retry_backoff_ms = 100
+retry_on_timeout = true
+stop_on_fail = true
