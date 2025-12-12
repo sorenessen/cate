@@ -1,0 +1,15 @@
+[flows.demo-redirect-off]
+description = "Demo: assert 302 by disabling redirects, and enable retries."
+steps = ["set"]
+
+[flows.demo-redirect-off.set]
+method = "GET"
+url = "https://httpbingo.org/cookies/set?sessionid=abc123"
+expect_status = 302
+
+follow_redirects = false
+
+retry_count = 2
+retry_backoff_ms = 250
+retry_on_status = [429, 500, 502, 503, 504]
+retry_on_timeout = true

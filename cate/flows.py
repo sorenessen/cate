@@ -64,6 +64,13 @@ class FlowStep:
     cookie_must_equal: Optional[Dict[str, str]] = None
     cookie_must_contain: Optional[Dict[str, str]] = None
 
+    # Redirect + retries (v0.3.5)
+    follow_redirects: Optional[bool] = None  # None = default (True)
+
+    retry_count: int = 0
+    retry_backoff_ms: int = 250
+    retry_on_status: Optional[List[int]] = None  # e.g. [429, 500, 502, 503, 504]
+    retry_on_timeout: bool = True
 
 @dataclass
 class Flow:
@@ -207,6 +214,29 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                     str(k): str(v) for k, v in raw_json_must_contain.items()
                 }
 
+            follow_redirects = raw.get("follow_redirects")
+
+            retry_count = raw.get("retry_count", 0)
+            retry_backoff_ms = raw.get("retry_backoff_ms", 250)
+
+            raw_retry_on_status = raw.get("retry_on_status")
+            retry_on_status: Optional[List[int]] = None
+            if isinstance(raw_retry_on_status, int):
+                retry_on_status = [int(raw_retry_on_status)]
+            elif isinstance(raw_retry_on_status, list):
+                out: List[int] = []
+                for x in raw_retry_on_status:
+                    try:
+                        out.append(int(x))
+                    except Exception:
+                        pass
+                retry_on_status = out or None
+
+
+
+            retry_on_timeout = bool(raw.get("retry_on_timeout", True))
+
+
             extract_cookie = raw.get("extract_cookie")
             cookie_strategy = raw.get("cookie_strategy")
 
@@ -257,6 +287,12 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 cookie_must_exist=cookie_must_exist,
                 cookie_must_equal=cookie_must_equal,
                 cookie_must_contain=cookie_must_contain,
+                follow_redirects=follow_redirects,
+                retry_count=int(retry_count or 0),
+                retry_backoff_ms=int(retry_backoff_ms or 250),
+                retry_on_status=retry_on_status,
+                retry_on_timeout=retry_on_timeout,
+
 
             )
 
@@ -456,15 +492,57 @@ async def _run_flow_async(
                     for key, value in step.headers.items()
                 }
 
+            headers_dict: Dict[str, str] = {}    
 
             started = time.perf_counter()
             try:
-                resp = await client.request(
-                    method,
-                    url,
-                    data=data,
-                    headers=headers,
-                )
+                # Per-step override: default True (browser-like)
+                step_follow = True if step.follow_redirects is None else bool(step.follow_redirects)
+
+                # Retry settings
+                retry_count = int(getattr(step, "retry_count", 0) or 0)
+                backoff_ms = int(getattr(step, "retry_backoff_ms", 250) or 250)
+                retry_on_status = getattr(step, "retry_on_status", None) or [429, 500, 502, 503, 504]
+                retry_on_timeout = bool(getattr(step, "retry_on_timeout", True))
+
+                resp = None
+                last_exc: Optional[Exception] = None
+                attempts = 0
+
+                for attempt in range(retry_count + 1):
+                    attempts = attempt + 1
+                    try:
+                        resp = await client.request(
+                            method,
+                            url,
+                            data=data,
+                            headers=headers,
+                            follow_redirects=step_follow,
+                        )
+
+                        # Retry on selected status codes (transient)
+                        if resp.status_code in retry_on_status and attempt < retry_count:
+                            sleep_s = (backoff_ms * (2 ** attempt)) / 1000.0
+                            await asyncio.sleep(sleep_s)
+                            continue
+
+                        # Otherwise accept this response
+                        break
+
+                    except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.TimeoutException) as exc:
+                        last_exc = exc
+                        if retry_on_timeout and attempt < retry_count:
+                            sleep_s = (backoff_ms * (2 ** attempt)) / 1000.0
+                            await asyncio.sleep(sleep_s)
+                            continue
+                        raise
+
+                if resp is None:
+                    # Should be unreachable, but keep it safe
+                    if last_exc:
+                        raise last_exc
+                    raise RuntimeError("request failed without response")
+
 
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 status = resp.status_code
@@ -921,6 +999,7 @@ async def _run_flow_async(
                         "headers": headers or {},
                         "body": body_for_log,
                         "response_headers": headers_dict,
+                        "attempts": attempts,
                     }
                 )
 
@@ -935,13 +1014,15 @@ async def _run_flow_async(
                         "ok": False,
                         "elapsed_ms": round(elapsed_ms, 2),
                         "bytes": 0,
-                        "error": str(exc),
+                        "error": f"{type(exc).__name__}: {exc}" if str(exc) else f"{type(exc).__name__}",
                         "assertions": {},
                         "extracted_var": None,
                         "extracted_value": None,
                         "headers": headers or {},
                         "body": None,
                         "response_headers": headers_dict,
+                        "attempts": attempts or 1,
+
                     }
                 )
 

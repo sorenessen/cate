@@ -1,0 +1,13 @@
+[flows.demo-retry-status]
+description = "Demo: verify retry loop by forcing HTTP 503 a few times."
+steps = ["fail"]
+
+[flows.demo-retry-status.fail]
+method = "GET"
+url = "https://httpbingo.org/status/503"
+expect_status = 503
+
+retry_count = 3
+retry_backoff_ms = 100
+retry_on_status = [503]
+stop_on_fail = true
