@@ -1,8 +1,37 @@
 # Changelog
 
 All notable changes to **CATE — Calypso Automated Testing Engine** are documented in this file.
+---
 
-The version numbers below match the informal milestones we’ve been using in the code and README (`v0.1`, `v0.2`, `v0.3`).
+## v0.3.6 – Flow logging controls & robustness
+
+### Added
+- Output control flags for `http-flow`:
+  - `--no-jsonl` – disable writing `<output>.jsonl`
+  - `--no-summary-md` – disable writing `<output>.summary.md`
+  - `--no-summary-json` – disable writing `<output>.summary.json`
+  - `--quiet` – suppress the “Wrote:” output line (errors still shown)
+- `write_flow_logs(...)` now returns the list of files actually written:
+  - Enables accurate CLI reporting of generated artifacts.
+- Flow summaries now always respect output flags consistently across:
+  - JSONL
+  - Markdown summary
+  - JSON summary
+
+### Fixed
+- Crash when using `--save-body` with non-empty response bodies:
+  - HTML detection is now safe and correctly writes `.body.html` when applicable.
+- `--save-body` now correctly:
+  - Writes only for failing steps
+  - Skips empty bodies
+  - Includes body files in the CLI “Wrote:” output list.
+- Output directories are now created **only** for enabled outputs, preventing stray empty directories.
+
+### Improved
+- Flow logging behavior is now fully deterministic:
+  - Disabled outputs produce no files
+  - Enabled outputs are always listed explicitly
+- CLI output is clearer and quieter when desired, without losing failure context.
 
 ---
 
