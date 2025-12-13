@@ -36,3 +36,94 @@ url = "https://httpbingo.org/status/503"
 # We EXPECT 503 so the step still passes, but retries should happen first.
 expect_status = 503
 
+[flows.demo-flow-defaults-redirect-off]
+description = "Demo: flow-level follow_redirects=false makes 302 observable"
+steps = ["set"]
+
+follow_redirects = false
+
+[flows.demo-flow-defaults-redirect-off.set]
+method = "GET"
+url = "https://httpbingo.org/redirect-to?url=/get"
+expect_status = 302
+
+[flows.demo-flow-defaults-retry]
+description = "Demo: flow-level retries apply to steps"
+steps = ["slow"]
+
+retry_count = 2
+retry_backoff_ms = 50
+retry_on_timeout = true
+
+[flows.demo-flow-defaults-retry.slow]
+method = "GET"
+url = "https://httpbingo.org/delay/3"
+expect_status = 200
+
+[flows.demo-flow-defaults-step-override]
+description = "Demo: step overrides flow-level retry defaults"
+steps = ["slow", "slow_no_retry"]
+
+# flow defaults
+retry_count = 2
+retry_backoff_ms = 50
+retry_on_timeout = true
+
+[flows.demo-flow-defaults-step-override.slow]
+method = "GET"
+url = "https://httpbingo.org/delay/3"
+expect_status = 200
+
+[flows.demo-flow-defaults-step-override.slow_no_retry]
+method = "GET"
+url = "https://httpbingo.org/delay/3"
+expect_status = 200
+retry_count = 0
+
+[flows.demo-flow-defaults-redirect-override]
+description = "Demo: step overrides flow-level follow_redirects"
+steps = ["see_302", "follow_302"]
+
+# flow default: do NOT follow redirects
+follow_redirects = false
+
+[flows.demo-flow-defaults-redirect-override.see_302]
+method = "GET"
+url = "https://httpbingo.org/redirect-to?url=/get"
+expect_status = 302
+
+[flows.demo-flow-defaults-redirect-override.follow_302]
+method = "GET"
+url = "https://httpbingo.org/redirect-to?url=/get"
+# step override: DO follow redirects
+follow_redirects = true
+expect_status = 200
+
+[flows.demo-flow-defaults-retry-status-2]
+description = "Demo: flow-level retry_on_status retries transient 503 and then succeeds"
+steps = ["flaky"]
+
+[flows.demo-flow-defaults-retry-status-fail]
+description = "Demo: retries on 503, but FAILS because we expect 200."
+steps = ["status503"]
+
+retry_count = 2
+retry_backoff_ms = 50
+retry_on_status = [503]
+retry_on_timeout = false
+
+[flows.demo-flow-defaults-retry-status-fail.status503]
+method = "GET"
+url = "https://httpbingo.org/status/503"
+expect_status = 200
+
+[flows.demo-save-body-nonempty]
+description = "Demo: fail with non-empty body so --save-body writes body file"
+steps = ["html"]
+
+[flows.demo-save-body-nonempty.html]
+method = "GET"
+url = "https://httpbingo.org/html"
+expect_status = 200
+body_must_contain = "THIS_WILL_NEVER_EXIST"
+
