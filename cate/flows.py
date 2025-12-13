@@ -149,6 +149,19 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
             # Require explicit step order
             continue
 
+        DEFAULT_KEYS = {
+            "follow_redirects",
+            "retry_count",
+            "retry_backoff_ms",
+            "retry_on_status",
+            "retry_on_timeout",
+        }
+
+        flow_defaults: Dict[str, Any] = {}
+        for k in DEFAULT_KEYS:
+            if k in cfg:
+                flow_defaults[k] = cfg.get(k)
+
         # Gather step definitions from nested tables
         step_defs: Dict[str, Any] = {}
         for key, value in cfg.items():
@@ -157,69 +170,64 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
 
         steps: List[FlowStep] = []
         for step_name in steps_order:
-            raw = step_defs.get(step_name)
-            if not isinstance(raw, dict):
-                # skip unknown / malformed step
+            raw_step = step_defs.get(step_name)
+            if not isinstance(raw_step, dict):
                 continue
-            method = str(raw.get("method", "GET")).upper()
-            url = str(raw.get("url", ""))
+
+            # Merge flow-level defaults into this step (step overrides)
+            step_cfg: Dict[str, Any] = dict(flow_defaults)
+            step_cfg.update(raw_step)
+
+            method = str(step_cfg.get("method", "GET")).upper()
+            url = str(step_cfg.get("url", ""))
             if not url:
                 continue
 
-            raw_headers = raw.get("headers")
+            raw_headers = step_cfg.get("headers")
             headers: Optional[Dict[str, str]] = None
             if isinstance(raw_headers, dict):
                 headers = {str(k): str(v) for k, v in raw_headers.items()}
 
-            raw_header_must_exist = raw.get("header_must_exist")
+            raw_header_must_exist = step_cfg.get("header_must_exist")
             header_must_exist: Optional[List[str]] = None
             if isinstance(raw_header_must_exist, str):
                 header_must_exist = [raw_header_must_exist]
             elif isinstance(raw_header_must_exist, list):
                 header_must_exist = [str(h) for h in raw_header_must_exist]
 
-            raw_header_must_contain = raw.get("header_must_contain")
+            raw_header_must_contain = step_cfg.get("header_must_contain")
             header_must_contain: Optional[Dict[str, str]] = None
             if isinstance(raw_header_must_contain, dict):
-                header_must_contain = {
-                    str(k): str(v) for k, v in raw_header_must_contain.items()
-                }
+                header_must_contain = {str(k): str(v) for k, v in raw_header_must_contain.items()}
 
-            raw_header_must_equal = raw.get("header_must_equal")
+            raw_header_must_equal = step_cfg.get("header_must_equal")
             header_must_equal: Optional[Dict[str, str]] = None
             if isinstance(raw_header_must_equal, dict):
-                header_must_equal = {
-                    str(k): str(v) for k, v in raw_header_must_equal.items()
-                }
+                header_must_equal = {str(k): str(v) for k, v in raw_header_must_equal.items()}
 
-
-            raw_json_must_exist = raw.get("json_must_exist")
+            raw_json_must_exist = step_cfg.get("json_must_exist")
             json_must_exist: Optional[List[str]] = None
             if isinstance(raw_json_must_exist, str):
                 json_must_exist = [raw_json_must_exist]
             elif isinstance(raw_json_must_exist, list):
                 json_must_exist = [str(p) for p in raw_json_must_exist]
 
-            raw_json_must_equal = raw.get("json_must_equal")
+            raw_json_must_equal = step_cfg.get("json_must_equal")
             json_must_equal: Optional[Dict[str, str]] = None
             if isinstance(raw_json_must_equal, dict):
-                json_must_equal = {
-                    str(k): str(v) for k, v in raw_json_must_equal.items()
-                }
+                json_must_equal = {str(k): str(v) for k, v in raw_json_must_equal.items()}
 
-            raw_json_must_contain = raw.get("json_must_contain")
+            raw_json_must_contain = step_cfg.get("json_must_contain")
             json_must_contain: Optional[Dict[str, str]] = None
             if isinstance(raw_json_must_contain, dict):
-                json_must_contain = {
-                    str(k): str(v) for k, v in raw_json_must_contain.items()
-                }
+                json_must_contain = {str(k): str(v) for k, v in raw_json_must_contain.items()}
 
-            follow_redirects = raw.get("follow_redirects")
+            follow_redirects = step_cfg.get("follow_redirects")
 
-            retry_count = raw.get("retry_count", 0)
-            retry_backoff_ms = raw.get("retry_backoff_ms", 250)
+            retry_count = step_cfg.get("retry_count", 0)
+            retry_backoff_ms = step_cfg.get("retry_backoff_ms", 250)
 
-            raw_retry_on_status = raw.get("retry_on_status")
+            raw_retry_on_status = step_cfg.get("retry_on_status")
             retry_on_status: Optional[List[int]] = None
             if isinstance(raw_retry_on_status, int):
                 retry_on_status = [int(raw_retry_on_status)]
@@ -232,50 +240,45 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                         pass
                 retry_on_status = out or None
 
+            retry_on_timeout = bool(step_cfg.get("retry_on_timeout", True))
 
+            extract_cookie = step_cfg.get("extract_cookie")
+            cookie_strategy = step_cfg.get("cookie_strategy")
 
-            retry_on_timeout = bool(raw.get("retry_on_timeout", True))
-
-
-            extract_cookie = raw.get("extract_cookie")
-            cookie_strategy = raw.get("cookie_strategy")
-
-            # cookie_must_exist can be string or list
-            raw_cookie_must_exist = raw.get("cookie_must_exist")
+            raw_cookie_must_exist = step_cfg.get("cookie_must_exist")
             cookie_must_exist: Optional[List[str]] = None
             if isinstance(raw_cookie_must_exist, str):
                 cookie_must_exist = [raw_cookie_must_exist]
             elif isinstance(raw_cookie_must_exist, list):
                 cookie_must_exist = [str(x) for x in raw_cookie_must_exist]
 
-            raw_cookie_must_equal = raw.get("cookie_must_equal")
+            raw_cookie_must_equal = step_cfg.get("cookie_must_equal")
             cookie_must_equal: Optional[Dict[str, str]] = None
             if isinstance(raw_cookie_must_equal, dict):
                 cookie_must_equal = {str(k): str(v) for k, v in raw_cookie_must_equal.items()}
 
-            raw_cookie_must_contain = raw.get("cookie_must_contain")
+            raw_cookie_must_contain = step_cfg.get("cookie_must_contain")
             cookie_must_contain: Optional[Dict[str, str]] = None
             if isinstance(raw_cookie_must_contain, dict):
                 cookie_must_contain = {str(k): str(v) for k, v in raw_cookie_must_contain.items()}
-
 
             step = FlowStep(
                 name=step_name,
                 method=method,
                 url=url,
-                body_template=raw.get("body_template"),
-                capture_cookies=bool(raw.get("capture_cookies", False)),
-                expect_status=raw.get("expect_status"),
+                body_template=step_cfg.get("body_template"),
+                capture_cookies=bool(step_cfg.get("capture_cookies", False)),
+                expect_status=step_cfg.get("expect_status"),
                 headers=headers,
-                max_latency_ms=raw.get("max_latency_ms"),
-                body_must_contain=raw.get("body_must_contain"),
-                body_must_not_contain=raw.get("body_must_not_contain"),
-                stop_on_fail=bool(raw.get("stop_on_fail", False)),
-                extract_regex=raw.get("extract_regex"),
-                extract_json=raw.get("extract_json"),
-                extract_header=raw.get("extract_header"),
-                store_as=raw.get("store_as"),
-                require_extracted=bool(raw.get("require_extracted", False)),
+                max_latency_ms=step_cfg.get("max_latency_ms"),
+                body_must_contain=step_cfg.get("body_must_contain"),
+                body_must_not_contain=step_cfg.get("body_must_not_contain"),
+                stop_on_fail=bool(step_cfg.get("stop_on_fail", False)),
+                extract_regex=step_cfg.get("extract_regex"),
+                extract_json=step_cfg.get("extract_json"),
+                extract_header=step_cfg.get("extract_header"),
+                store_as=step_cfg.get("store_as"),
+                require_extracted=bool(step_cfg.get("require_extracted", False)),
                 header_must_exist=header_must_exist,
                 header_must_contain=header_must_contain,
                 header_must_equal=header_must_equal,
@@ -292,12 +295,10 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
                 retry_backoff_ms=int(retry_backoff_ms or 250),
                 retry_on_status=retry_on_status,
                 retry_on_timeout=retry_on_timeout,
-
-
             )
 
-
             steps.append(step)
+
 
         if steps:
             flows[flow_name] = Flow(
@@ -406,7 +407,7 @@ async def _run_flow_async(
     max_rps: float = 2.0,
     stop_on_first_failure: bool = False,
     ignore_step_stop_flags: bool = False,
-    initial_vars: Optional[Dist[str, Any]] = None,
+    initial_vars: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
 
 

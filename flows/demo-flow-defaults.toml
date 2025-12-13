@@ -1,0 +1,38 @@
+[flows.demo-flow-defaults]
+description = "Demo: flow-level defaults inherited by steps"
+steps = ["a", "b"]
+
+# defaults apply to both steps
+retry_count = 2
+retry_backoff_ms = 100
+retry_on_timeout = true
+follow_redirects = true
+
+[flows.demo-flow-defaults.a]
+method = "GET"
+url = "https://httpbingo.org/delay/3"
+expect_status = 200
+
+[flows.demo-flow-defaults.b]
+method = "GET"
+url = "https://httpbingo.org/delay/3"
+expect_status = 200
+# override default just for this step
+retry_count = 0
+
+[flows.demo-flow-defaults-retry-status]
+description = "Demo: flow-level retry defaults inherited by steps (retry on 503, but still PASS)."
+steps = ["status503"]
+
+# FLOW-LEVEL DEFAULTS (these should apply to the step below)
+retry_count = 2
+retry_backoff_ms = 100
+retry_on_status = [503]
+retry_on_timeout = true
+
+[flows.demo-flow-defaults-retry-status.status503]
+method = "GET"
+url = "https://httpbingo.org/status/503"
+# We EXPECT 503 so the step still passes, but retries should happen first.
+expect_status = 503
+
