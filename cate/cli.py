@@ -16,6 +16,8 @@ from .logging_utils import write_results_jsonl
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 from .flows import load_flow, load_flows, run_flow, FlowNotFound, _apply_template_functions
+from cate.flows import load_flows, load_flow, FlowNotFound, lint_flows
+
 
 # Simple ANSI color helpers
 _RESET = "\033[0m"
@@ -218,6 +220,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--list",
         action="store_true",
         help="List available flows from flows.toml and exit.",
+    )
+    http_flow_parser.add_argument(
+        "--lint",
+        action="store_true",
+        help="Validate flows TOML structure/types and exit (no network). Non-zero on errors.",
     )
     http_flow_parser.add_argument(
         "--timeout",
@@ -1040,6 +1047,32 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             )
             return 1
+
+        # --lint: validate flows and exit (no network)
+        if getattr(args, "lint", False):
+            try:
+                flows, warnings, errors = lint_flows(flows_path)
+            except FileNotFoundError as e:
+                print(_color(f"[CATE] {e}", _FG_RED))
+                return 1
+            except ValueError as e:
+                # TOML parse error with enhanced context
+                print(_color(str(e), _FG_RED))
+                return 1
+
+            # Print override warnings (non-fatal)
+            for w in warnings:
+                print(_color(f"[CATE] {w}", _FG_YELLOW))
+
+            if errors:
+                print(_color("[CATE] Flow lint failed:", _FG_RED))
+                for err in errors:
+                    print(_color(f"  - {err}", _FG_RED))
+                return 1
+
+            print(_color("[CATE] Flow lint passed (no issues found).", _FG_GREEN))
+            return 0
+
 
         # --list: enumerate flows and exit
         if args.list:
