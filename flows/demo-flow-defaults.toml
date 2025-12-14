@@ -126,4 +126,3 @@ method = "GET"
 url = "https://httpbingo.org/html"
 expect_status = 200
 body_must_contain = "THIS_WILL_NEVER_EXIST"
-

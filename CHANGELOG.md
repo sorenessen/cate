@@ -3,6 +3,11 @@
 All notable changes to **CATE — Calypso Automated Testing Engine** are documented in this file.
 ---
 
+## v0.3.7 – Retry semantics + flow robustness
+
+
+---
+
 ## v0.3.6 – Flow logging controls & robustness
 
 ### Added
