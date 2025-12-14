@@ -103,6 +103,11 @@ expect_status = 200
 description = "Demo: flow-level retry_on_status retries transient 503 and then succeeds"
 steps = ["flaky"]
 
+[flows.demo-flow-defaults-retry-status-2.flaky]
+method = "GET"
+url = "https://httpbingo.org/status/503"
+expect_status = 200
+
 [flows.demo-flow-defaults-retry-status-fail]
 description = "Demo: retries on 503, but FAILS because we expect 200."
 steps = ["status503"]
@@ -126,4 +131,3 @@ method = "GET"
 url = "https://httpbingo.org/html"
 expect_status = 200
 body_must_contain = "THIS_WILL_NEVER_EXIST"
-
