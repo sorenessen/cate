@@ -10,6 +10,7 @@ import time
 import uuid
 import secrets
 import string
+import hashlib
 from datetime import datetime, timezone
 
 import httpx
@@ -574,7 +575,9 @@ async def _run_flow_async(
     stop_on_first_failure: bool = False,
     ignore_step_stop_flags: bool = False,
     initial_vars: Optional[Dict[str, Any]] = None,
+    mode: str = "default",
 ) -> List[Dict[str, Any]]:
+
 
 
     """
@@ -607,6 +610,9 @@ async def _run_flow_async(
         # Seed with any CLI / external vars; copy to avoid mutating caller dict
         "vars": dict(initial_vars or {}),
     }
+
+    mode_name = (mode or "").strip().lower()
+    is_recon = (mode_name == "recon")
 
     results: List[Dict[str, Any]] = []
 
@@ -664,7 +670,12 @@ async def _run_flow_async(
             started = time.perf_counter()
             try:
                 # Per-step override: default True (browser-like)
-                step_follow = True if step.follow_redirects is None else bool(step.follow_redirects)
+                if step.follow_redirects is None:
+                    # Default behavior stays "browser-like" unless recon mode is on
+                    step_follow = False if is_recon else True
+                else:
+                    step_follow = bool(step.follow_redirects)
+
 
                 # Retry settings
                 retry_count = int(getattr(step, "retry_count", 0) or 0)
@@ -1150,6 +1161,78 @@ async def _run_flow_async(
                             body_text = None
                     body_for_log = body_text
 
+                # --- Recon mode artifacts -------------------------------------------------
+                recon_meta: Dict[str, Any] = {}
+
+                mode_name = str(mode or "").strip().lower()
+                is_recon = (mode_name == "recon")
+
+                if is_recon:
+                    # 1) Redirect chain (always present, even if empty history)
+                    chain: List[Dict[str, Any]] = []
+                    try:
+                        for h in (resp.history or []):
+                            chain.append(
+                                {
+                                    "status": h.status_code,
+                                    "location": h.headers.get("location"),
+                                }
+                            )
+                    except Exception:
+                        pass
+
+                    # final hop
+                    chain.append(
+                        {
+                            "status": resp.status_code,
+                            "location": resp.headers.get("location"),
+                        }
+                    )
+                    recon_meta["redirect_chain"] = chain
+
+                    # 2) Fingerprint headers (case-insensitive, but keep original values)
+                    fp_keys = [
+                        "server",
+                        "via",
+                        "x-powered-by",
+                        "content-type",
+                        "set-cookie",
+                        "x-cache",
+                        "cf-ray",
+                        "cf-cache-status",
+                        "x-amzn-requestid",
+                        "x-amz-cf-id",
+                        "x-served-by",
+                        "fly-request-id",
+                        "server-timing",
+                    ]
+
+                    # normalize once
+                    hdrs = {str(k).lower(): str(v) for k, v in (headers_dict or {}).items()}
+
+                    fp: Dict[str, str] = {}
+                    for k in fp_keys:
+                        v = hdrs.get(k.lower())
+                        if v:
+                            fp[k] = v
+                    recon_meta["fingerprint_headers"] = fp
+
+                    # 3) Body hash (safe diffing, does not expose content)
+                    try:
+                        content = resp.content or b""
+                        # cap hashing to avoid huge memory/time surprises
+                        if len(content) <= 2_000_000:
+                            import hashlib
+                            recon_meta["body_sha256"] = hashlib.sha256(content).hexdigest()
+                        else:
+                            recon_meta["body_sha256"] = None
+                            recon_meta["body_truncated_for_hash"] = len(content)
+                    except Exception:
+                        pass
+                # -------------------------------------------------------------------------
+
+
+
                 results.append(
                     {
                         "step": step.name,
@@ -1167,6 +1250,7 @@ async def _run_flow_async(
                         "body": body_for_log,
                         "response_headers": headers_dict,
                         "attempts": attempts,
+                        "recon": recon_meta,
                     }
                 )
 
@@ -1216,7 +1300,7 @@ def run_flow(
     stop_on_first_failure: bool = False,
     ignore_step_stop_flags: bool = False,
     initial_vars: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
+    mode: str = "default") -> List[Dict[str, Any]]:
     """
     Synchronous wrapper around _run_flow_async.
     """
@@ -1228,5 +1312,6 @@ def run_flow(
             stop_on_first_failure=stop_on_first_failure,
             ignore_step_stop_flags=ignore_step_stop_flags,
             initial_vars=initial_vars,
+            mode=mode,
         )
     )
