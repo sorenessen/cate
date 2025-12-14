@@ -3,6 +3,30 @@
 All notable changes to **CATE — Calypso Automated Testing Engine** are documented in this file.
 ---
 
+## v0.3.7 – Retry semantics + flow robustness + Flow linting + TOML diagnostics
+
+# CATE 0.3.7 — Flow linting + TOML diagnostics
+
+## Added
+- `cate http-flow --lint` to validate flows without sending network requests:
+  - Loads `flows.toml` plus any `flows/*.toml`
+  - Validates flow structure and common type issues
+  - Exits non-zero when lint errors are found
+- Flow collision visibility:
+  - Warns when a flow definition is overridden by a later file in `flows/*.toml`
+
+## Improved
+- TOML parse errors now include the filename (and preserve line/column context)
+- Flow logging robustness:
+  - `--save-body` reliably writes `.body.txt` for failing steps
+  - Writes `.body.html` when the captured body looks like HTML
+
+## Notes
+- `--lint` is designed for CI and pre-commit checks (fast, deterministic, no HTTP traffic).
+
+
+---
+
 ## v0.3.6 – Flow logging controls & robustness
 
 ### Added

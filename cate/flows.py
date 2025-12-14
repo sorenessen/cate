@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import httpx
 import tomllib
 from urllib.parse import quote_plus
+from tomllib import TOMLDecodeError
 
 _TEMPLATE_RE = re.compile(r"{([^}]+)}")
 
@@ -78,6 +79,30 @@ class Flow:
     description: str
     steps: List[FlowStep]
 
+
+def _load_toml_or_die(file_path: Path) -> dict:
+    text = file_path.read_text(encoding="utf-8")
+    try:
+        return tomllib.loads(text)
+    except TOMLDecodeError as e:
+        # e.lineno / e.colno are 1-based
+        line_no = getattr(e, "lineno", None)
+        col_no = getattr(e, "colno", None)
+
+        snippet = ""
+        if isinstance(line_no, int) and line_no > 0:
+            lines = text.splitlines()
+            if 1 <= line_no <= len(lines):
+                bad_line = lines[line_no - 1]
+                caret_col = max((col_no or 1) - 1, 0)
+                caret = " " * caret_col + "^"
+                snippet = f"\n\n{line_no}:{col_no or 1}: {bad_line}\n{' ' * (len(str(line_no)) + 2)}{caret}"
+
+        raise ValueError(
+            f"[CATE] Invalid TOML in {file_path}: {e}{snippet}"
+        ) from e
+
+
 def load_flows(path: Path | None = None) -> Dict[str, Flow]:
     """
     Load all flows from a TOML file, plus any additional TOML files
@@ -115,23 +140,33 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
 
     # 2) Load base flows from the main file
     text = path.read_text(encoding="utf-8")
-    data = tomllib.loads(text)
+    data = _load_toml_or_die(path)
 
     combined_flows: Dict[str, Any] = {}
+    origins: Dict[str, Path] = {}
+    override_warnings: List[str] = []
+
     base_flows_section = data.get("flows", {})
     if isinstance(base_flows_section, dict):
-        combined_flows.update(base_flows_section)
+        for name, cfg in base_flows_section.items():
+            combined_flows[name] = cfg
+            origins[name] = path
 
-    # 3) Load any additional flows from `flows/*.toml` (sibling directory)
     flows_dir = path.parent / "flows"
     if flows_dir.is_dir():
         for child in sorted(flows_dir.glob("*.toml")):
-            child_text = child.read_text(encoding="utf-8")
-            child_data = tomllib.loads(child_text)
+            child_data = _load_toml_or_die(child)
             child_flows = child_data.get("flows", {})
             if isinstance(child_flows, dict):
-                # Later files override earlier by name
-                combined_flows.update(child_flows)
+                for name, cfg in child_flows.items():
+                    if name in combined_flows:
+                        prev = origins.get(name, path)
+                        override_warnings.append(
+                            f"Flow '{name}' overridden: {prev} -> {child}"
+                        )
+                    combined_flows[name] = cfg
+                    origins[name] = child
+
 
     if not isinstance(combined_flows, dict):
         raise ValueError("flows.toml (and any flows/*.toml) must contain a [flows] table.")
@@ -316,6 +351,137 @@ def load_flow(name: str, path: Path | None = None) -> Flow:
     if name not in flows:
         raise FlowNotFound(f"Flow '{name}' not found in flows.toml")
     return flows[name]
+
+def lint_flows(path: Path | None = None) -> tuple[dict[str, Flow], list[str], list[str]]:
+    """
+    Returns: (flows, warnings, errors)
+      - warnings: override/collision messages
+      - errors: structural/type issues that should fail lint
+    """
+    if path is None:
+        path = Path("flows.toml")
+    else:
+        path = Path(path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"No flows file found at {path!s}")
+
+    # Load + merge with override warnings (same precedence as load_flows)
+    data = _load_toml_or_die(path)
+
+    warnings: List[str] = []
+    errors: List[str] = []
+
+    combined: Dict[str, Any] = {}
+    origins: Dict[str, Path] = {}
+
+    base = data.get("flows", {})
+    if isinstance(base, dict):
+        for name, cfg in base.items():
+            combined[name] = cfg
+            origins[name] = path
+    else:
+        errors.append(f"{path}: missing [flows] table or it is not a table.")
+        return {}, warnings, errors
+
+    flows_dir = path.parent / "flows"
+    if flows_dir.is_dir():
+        for child in sorted(flows_dir.glob("*.toml")):
+            child_data = _load_toml_or_die(child)
+            child_flows = child_data.get("flows", {})
+            if not isinstance(child_flows, dict):
+                errors.append(f"{child}: [flows] table missing or not a table.")
+                continue
+            for name, cfg in child_flows.items():
+                if name in combined:
+                    warnings.append(f"Flow '{name}' overridden: {origins.get(name)} -> {child}")
+                combined[name] = cfg
+                origins[name] = child
+
+    # Structural validation on raw TOML before building Flow objects
+    for flow_name, cfg in combined.items():
+        origin = origins.get(flow_name, path)
+        if not isinstance(cfg, dict):
+            errors.append(f"{origin}: flows.{flow_name} must be a table/object.")
+            continue
+
+        steps = cfg.get("steps")
+        if not isinstance(steps, list) or not steps:
+            errors.append(f"{origin}: flows.{flow_name}.steps must be a non-empty array.")
+            continue
+
+        steps_as_str = []
+        for s in steps:
+            if not isinstance(s, str) or not s.strip():
+                errors.append(f"{origin}: flows.{flow_name}.steps contains a non-string/empty step name: {s!r}")
+            else:
+                steps_as_str.append(s.strip())
+
+        # duplicate step names in order list
+        if len(set(steps_as_str)) != len(steps_as_str):
+            errors.append(f"{origin}: flows.{flow_name}.steps contains duplicate step names.")
+
+        # step tables present?
+        step_tables = {k: v for k, v in cfg.items() if isinstance(v, dict) and k not in ("steps", "description")}
+        for step_name in steps_as_str:
+            if step_name not in step_tables:
+                errors.append(f"{origin}: flows.{flow_name} references step '{step_name}' but no table [flows.{flow_name}.{step_name}] exists.")
+                continue
+
+            scfg = step_tables[step_name]
+            url = scfg.get("url")
+            if not isinstance(url, str) or not url.strip():
+                errors.append(f"{origin}: flows.{flow_name}.{step_name}.url is required and must be a non-empty string.")
+
+            expect_status = scfg.get("expect_status")
+            if expect_status is not None and not isinstance(expect_status, int):
+                errors.append(f"{origin}: flows.{flow_name}.{step_name}.expect_status must be an int if set.")
+
+            retry_count = scfg.get("retry_count")
+            if retry_count is not None and not isinstance(retry_count, int):
+                errors.append(f"{origin}: flows.{flow_name}.{step_name}.retry_count must be an int if set.")
+
+            retry_backoff_ms = scfg.get("retry_backoff_ms")
+            if retry_backoff_ms is not None and not isinstance(retry_backoff_ms, int):
+                errors.append(f"{origin}: flows.{flow_name}.{step_name}.retry_backoff_ms must be an int if set.")
+
+            retry_on_status = scfg.get("retry_on_status")
+            if retry_on_status is not None:
+                ok = isinstance(retry_on_status, int) or (
+                    isinstance(retry_on_status, list) and all(isinstance(x, int) for x in retry_on_status)
+                )
+                if not ok:
+                    errors.append(f"{origin}: flows.{flow_name}.{step_name}.retry_on_status must be an int or list[int].")
+
+            headers = scfg.get("headers")
+            if headers is not None and not isinstance(headers, dict):
+                errors.append(f"{origin}: flows.{flow_name}.{step_name}.headers must be a table/object if set.")
+
+            max_latency_ms = scfg.get("max_latency_ms")
+            if max_latency_ms is not None and not isinstance(max_latency_ms, (int, float)):
+                errors.append(f"{origin}: flows.{flow_name}.{step_name}.max_latency_ms must be a number if set.")
+
+            # Validate simple string/list fields you already support
+            for key in ("header_must_exist", "json_must_exist", "cookie_must_exist"):
+                val = scfg.get(key)
+                if val is not None and not (
+                    isinstance(val, str) or (isinstance(val, list) and all(isinstance(x, str) for x in val))
+                ):
+                    errors.append(f"{origin}: flows.{flow_name}.{step_name}.{key} must be a string or list[string].")
+
+            for key in ("header_must_equal", "header_must_contain", "json_must_equal", "json_must_contain", "cookie_must_equal", "cookie_must_contain"):
+                val = scfg.get(key)
+                if val is not None and not isinstance(val, dict):
+                    errors.append(f"{origin}: flows.{flow_name}.{step_name}.{key} must be a table/object if set.")
+
+    # If structural errors exist, don't attempt building Flow objects (avoids confusing follow-on errors)
+    if errors:
+        return {}, warnings, errors
+
+    # Build Flow objects using your existing loader (single source of truth)
+    flows = load_flows(path)
+    return flows, warnings, errors
+
 
 def _apply_template_functions(template: str, vars: Dict[str, Any]) -> str:
     """
