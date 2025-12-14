@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import httpx
 import tomllib
 from urllib.parse import quote_plus
+from tomllib import TOMLDecodeError
 
 _TEMPLATE_RE = re.compile(r"{([^}]+)}")
 
@@ -78,6 +79,13 @@ class Flow:
     description: str
     steps: List[FlowStep]
 
+def _load_toml_or_die(file_path: Path) -> dict:
+    text = file_path.read_text(encoding="utf-8")
+    try:
+        return tomllib.loads(text)
+    except TOMLDecodeError as e:
+        raise ValueError(f"[CATE] Invalid TOML in {file_path}: {e}") from e
+
 def load_flows(path: Path | None = None) -> Dict[str, Flow]:
     """
     Load all flows from a TOML file, plus any additional TOML files
@@ -115,7 +123,7 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
 
     # 2) Load base flows from the main file
     text = path.read_text(encoding="utf-8")
-    data = tomllib.loads(text)
+    data = _load_toml_or_die(path)
 
     combined_flows: Dict[str, Any] = {}
     base_flows_section = data.get("flows", {})
@@ -127,7 +135,7 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
     if flows_dir.is_dir():
         for child in sorted(flows_dir.glob("*.toml")):
             child_text = child.read_text(encoding="utf-8")
-            child_data = tomllib.loads(child_text)
+            child_data = _load_toml_or_die(child)
             child_flows = child_data.get("flows", {})
             if isinstance(child_flows, dict):
                 # Later files override earlier by name
