@@ -298,6 +298,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     http_flow_parser.add_argument(
+        "--mode",
+        type=str,
+        default="default",
+        choices=["default", "recon"],  # expand later
+        help="Flow mode. 'recon' adds passive fingerprinting artifacts to logs.",
+    )
+
+    http_flow_parser.add_argument(
         "--var",
         action="append",
         default=None,
@@ -1211,7 +1219,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             stop_on_first_failure=stop_on_first_failure,
             ignore_step_stop_flags=ignore_step_stop_flags,
             initial_vars=initial_vars,
+            mode=args.mode,
         )
+
 
         print("\n[CATE] Flow results:")
         failures = 0
