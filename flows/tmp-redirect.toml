@@ -1,0 +1,8 @@
+[flows.redirect-demo]
+description="redirect chain"
+steps=["r"]
+
+[flows.redirect-demo.r]
+method="GET"
+url="https://httpbingo.org/redirect-to?url=https://httpbingo.org/json"
+expect_status=200
