@@ -10,11 +10,13 @@ follow_redirects = true
 
 [flows.demo-flow-defaults.a]
 method = "GET"
+# url = "https://delphonix.com"
 url = "https://httpbingo.org/delay/3"
 expect_status = 200
 
 [flows.demo-flow-defaults.b]
 method = "GET"
+# url = "https://delphonix.com"
 url = "https://httpbingo.org/delay/3"
 expect_status = 200
 # override default just for this step
