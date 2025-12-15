@@ -389,9 +389,18 @@ def write_flow_logs(
     """
     written: List[Path] = []
 
-    jsonl_path = Path(f"{output_prefix}.jsonl")
-    summary_md_path = Path(f"{output_prefix}.summary.md")
-    summary_json_path = Path(f"{output_prefix}.summary.json")
+    out = Path(output_prefix)
+
+    # If the user passed a filename ending in .jsonl, keep it.
+    # Otherwise treat as prefix and append .jsonl
+    if out.suffix.lower() == ".jsonl":
+        jsonl_path = out
+    else:
+        jsonl_path = Path(f"{output_prefix}.jsonl")
+
+    # For summaries, always hang them off the jsonl base name
+    summary_md_path = jsonl_path.with_suffix(".summary.md")
+    summary_json_path = jsonl_path.with_suffix(".summary.json")
 
     # Ensure parent directory exists for ALL outputs we might write
     for p, enabled in [
