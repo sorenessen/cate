@@ -738,6 +738,47 @@ async def _run_flow_async(
                 size = len(resp.content)
                 body_text: Optional[str] = None  # lazy
                 headers_dict: Dict[str, str] = dict(resp.headers)
+                mode_meta: Dict[str, Any] = {}
+
+                is_auth_pressure = (mode_name == "auth-pressure")
+
+                if is_auth_pressure:
+                    # Keep it simple + deterministic: classify auth outcomes
+                    auth_state = "ok"
+                    if status in (401,):
+                        auth_state = "unauthorized"
+                    elif status in (403,):
+                        auth_state = "forbidden"
+                    elif status in (429,):
+                        auth_state = "rate_limited"
+                    elif status >= 500:
+                        auth_state = "server_error"
+
+                    # Optional lockout signal detection (only if body already loaded OR it's small)
+                    lockout_hit = False
+                    lockout_markers = [
+                        "too many attempts",
+                        "account locked",
+                        "locked out",
+                        "try again later",
+                        "rate limit",
+                        "captcha",
+                    ]
+
+                    # load body only if we need it and it isn't huge
+                    try:
+                        if body_text is None and len(resp.content or b"") <= 200_000:
+                            body_text = resp.text
+                        if body_text:
+                            low = body_text.lower()
+                            lockout_hit = any(m in low for m in lockout_markers)
+                    except Exception:
+                        pass
+
+                    mode_meta["auth_state"] = auth_state
+                    mode_meta["lockout_signal"] = lockout_hit
+                    mode_meta["status_class"] = f"{status//100}xx"
+
                 
                 ok = True
                 error_msg_parts: List[str] = []
@@ -1249,11 +1290,23 @@ async def _run_flow_async(
                         "response_headers": headers_dict,
                         "attempts": attempts,
                         "recon": recon_meta,
+                        "mode": mode_name,
+                        "mode_meta": mode_meta,
+
                     }
                 )
 
             except Exception as exc:
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+                # right before results.append(...) in the except:
+                mode_meta: Dict[str, Any] = {}
+                recon_meta: Dict[str, Any] = {
+                    "redirect_chain": [],
+                    "fingerprint_headers": {},
+                    "body_sha256": None,
+                }
+
                 results.append(
                     {
                         "step": step.name,
@@ -1272,10 +1325,10 @@ async def _run_flow_async(
                         "response_headers": headers_dict,
                         "attempts": attempts or 1,
                         "recon": recon_meta,
-
+                        "mode": mode_name,
+                        "mode_meta": mode_meta,
                     }
                 )
-
 
             last_start = time.perf_counter()
 
@@ -1287,10 +1340,15 @@ async def _run_flow_async(
                 if stop_on_first_failure or step_wants_stop:
                     break
 
-
+            # Mode-specific early stop: Auth Pressure
+            # Stop the playbook once defensive signals appear (lockout / throttling),
+            # to keep testing controlled and avoid hammering.
+            if mode_name == "auth-pressure":
+                mm = results[-1].get("mode_meta") or {}
+                if mm.get("lockout_signal") is True or mm.get("auth_state") in ("rate_limited", "locked_out"):
+                    break
 
     return results
-
 
 def run_flow(
     flow: Flow,

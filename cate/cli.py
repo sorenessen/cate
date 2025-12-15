@@ -301,10 +301,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         type=str,
         default="default",
-        choices=["default", "recon"],  # expand later
-        help="Flow mode. 'recon' adds passive fingerprinting artifacts to logs.",
+        choices=["default", "recon", "auth-pressure"],  # expand later
+        help="Assessment mode: default | recon | auth-pressure",
     )
-
     http_flow_parser.add_argument(
         "--var",
         action="append",
