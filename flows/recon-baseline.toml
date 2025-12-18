@@ -1,0 +1,15 @@
+[flows.recon-baseline]
+description = "Baseline unauthenticated recon to observe edge/WAF/app behavior"
+steps = ["home", "login_page"]
+
+# Step 1: homepage
+[flows.recon-baseline.home]
+method = "GET"
+url = "http://localhost:8080/"
+expect_status = [200, 301, 302, 403]
+
+# Step 2: login page (no credentials)
+[flows.recon-baseline.login_page]
+method = "GET"
+url = "http://localhost:8080/login"
+expect_status = [200, 401, 403]
