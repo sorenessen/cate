@@ -12,7 +12,7 @@ import sys
 
 from cate import __version__
 from .engine import run_job
-from .logging_utils import write_results_jsonl
+from .logging_utils import write_results_jsonl, write_flow_summary_md
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 from .flows import load_flow, load_flows, run_flow, FlowNotFound, _apply_template_functions
@@ -419,19 +419,16 @@ def write_flow_logs(
         written.append(jsonl_path)
 
 
-    # --- Pretty Markdown summary ---
-
+    # --- Summaries (Markdown + JSON) ---
     total = len(results)
     failing = [r for r in results if not r.get("ok")]
     failures = len(failing)
-    passed = (total > 0 and failures == 0)
     avg_ms = (
         sum(r.get("elapsed_ms", 0.0) for r in results) / total
         if total > 0
         else 0.0
     )
 
-    # Final vars: last value for each extracted_var across the flow
     final_vars: Dict[str, Any] = {}
     for r in results:
         var_name = r.get("extracted_var")
@@ -439,198 +436,13 @@ def write_flow_logs(
         if var_name is not None and var_value is not None:
             final_vars[var_name] = var_value
 
-    lines: List[str] = []
-
-    # 1. Header
-    if passed:
-        lines.append("# ✅ Flow Passed")
-    else:
-        lines.append("# ❌ Flow Failed")
-    lines.append("")
-
-    # 2. Overview
-    lines.append("## Overview\n")
-    lines.append("| Metric | Value |")
-    lines.append("|--------|-------|")
-    lines.append(f"| Steps | {total} |")
-    lines.append(f"| Failures | {failures} |")
-    lines.append(f"| Avg latency | {avg_ms:.2f} ms |")
-
-    # Optional env / CLI vars context
-    if env is not None:
-        lines.append(f"| Env | {env} |")
-
-    if initial_vars:
-        # Only show keys, not values (avoid leaking secrets)
-        var_keys = ", ".join(sorted(str(k) for k in initial_vars.keys()))
-        lines.append(f"| Seeded vars | {var_keys} |")
-
-    lines.append("")
-
-    # 3. Failing steps (if any)
-    if failing:
-        lines.append("## Failing Steps\n")
-        lines.append("| Step | Method | URL | Status | Time (ms) | Error |")
-        lines.append("|------|--------|-----|--------|-----------|--------|")
-        for r in failing:
-            step = r.get("step", "")
-            method = r.get("method", "")
-            url = str(r.get("url", "")).replace("|", "\\|")
-            status = r.get("status_code", "None")
-            latency = r.get("elapsed_ms", "–")
-            error = str(r.get("error") or "").replace("|", "\\|")
-            lines.append(
-                f"| {step} | {method} | {url} | {status} | {latency} | {error} |"
-            )
-        lines.append("")
-
-    # 4. All steps
-    if results:
-        lines.append("## All Steps\n")
-        lines.append("| Step | Method | URL | Status | OK | Latency (ms) | Bytes | Error |")
-        lines.append("|------|--------|-----|--------|----|-------------:|------:|-------|")
-
-        for r in results:
-            step = r.get("step", "")
-            method = r.get("method", "")
-            url = str(r.get("url", "")).replace("|", "\\|")
-            status = r.get("status_code", "None")
-            ok = "✅" if r.get("ok") else "❌"
-            latency = f"{r.get('elapsed_ms', 0.0):.1f}"
-            size = r.get("bytes", 0)
-            error = str(r.get("error") or "").replace("|", "\\|")
-            lines.append(
-                f"| {step} | {method} | {url} | {status} | {ok} | {latency} | {size} | {error} |"
-            )
-        lines.append("")
-
-    # Recon observations (if present)
-    recon_steps = [r for r in results if isinstance(r.get("recon"), dict) and r.get("recon")]
-
-    if recon_steps:
-        lines.append("")
-        lines.append("## Recon Observations")
-
-        for s in recon_steps:
-            step_name = s.get("step", "")
-            recon = s.get("recon", {})
-
-            lines.append("")
-            lines.append(f"### Step {step_name}")
-
-            chain = recon.get("redirect_chain")
-            if chain:
-                lines.append("")
-                lines.append("**Redirect chain:**")
-                for hop in chain:
-                    status = hop.get("status")
-                    location = hop.get("location")
-                    if location:
-                        lines.append(f"- {status} → {location}")
-                    else:
-                        lines.append(f"- {status}")
-
-
-            headers = recon.get("headers")
-            if isinstance(headers, dict) and headers:
-                lines.append("")
-                lines.append("**Observed headers:**")
-                for k, v in headers.items():
-                    lines.append(f"- `{k}`: `{v}`")
-
-            body_hash = recon.get("body_hash")
-            if body_hash:
-                lines.append("")
-                lines.append(f"**Body fingerprint:** `{body_hash}`")
-
-
-    # 5. Assertion breakdown (new in v0.3.x)
-    # Only render if at least one step has assertions or extracted vars.
-    assertion_keys: set[str] = set()
-    has_extracted = False
-    for r in results:
-        assertions = r.get("assertions") or {}
-        assertion_keys.update(assertions.keys())
-        if r.get("extracted_var") is not None or r.get("extracted_value") is not None:
-            has_extracted = True
-
-    if assertion_keys or has_extracted:
-        lines.append("## Assertion breakdown\n")
-        lines.append(
-            "This section shows per-step assertion results and any variables that were "
-            "extracted from response bodies."
-        )
-        lines.append("")
-
-        # Stable column order for common assertion names,
-        # then append any uncommon ones at the end.
-        common_order = [
-            "status_ok",
-            "latency_ok",
-            "body_contains_ok",
-            "body_not_contains_ok",
-            "extracted_ok",
-        ]
-        extra_keys = [k for k in sorted(assertion_keys) if k not in common_order]
-        ordered_keys = [k for k in common_order if k in assertion_keys] + extra_keys
-
-        header_cols: List[str] = ["Step"]
-        for k in ordered_keys:
-            header_cols.append(k)
-        if has_extracted:
-            header_cols.extend(["extracted_var", "extracted_value"])
-
-        # Header row
-        lines.append("| " + " | ".join(header_cols) + " |")
-        lines.append("|" + "|".join(["---"] * len(header_cols)) + "|")
-
-        # Rows
-        for r in results:
-            row: List[str] = []
-            row.append(str(r.get("step", "")))
-
-            assertions = r.get("assertions") or {}
-            for k in ordered_keys:
-                val = assertions.get(k, None)
-                if val is True:
-                    cell = "✅"
-                elif val is False:
-                    cell = "❌"
-                else:
-                    cell = ""
-                row.append(cell)
-
-            if has_extracted:
-                row.append(str(r.get("extracted_var") or ""))
-                row.append(str(r.get("extracted_value") or ""))
-
-            lines.append("| " + " | ".join(row) + " |")
-
-        lines.append("")
-
-    # 6. Final extracted variables (if any)
-    if final_vars:
-        lines.append("## Extracted variables (final state)\n")
-        lines.append(
-            "These are the last values of any variables extracted during this flow."
-        )
-        lines.append("")
-        lines.append("| Name | Value |")
-        lines.append("|------|-------|")
-        for name, value in final_vars.items():
-            safe_name = str(name).replace("|", "\\|")
-            safe_value = str(value).replace("|", "\\|")
-            lines.append(f"| {safe_name} | {safe_value} |")
-        lines.append("")
-
-    # Flow summary JSON (compact, machine-readable)
-    summary_obj: Dict[str, Any] = {
-        "steps": total,
-        "failures": failures,
-        "avg_latency_ms": avg_ms,
-        "final_vars": final_vars,
-    }
     if write_summary_json:
+        summary_obj: Dict[str, Any] = {
+            "steps": total,
+            "failures": failures,
+            "avg_latency_ms": avg_ms,
+            "final_vars": final_vars,
+        }
         try:
             summary_json_path.write_text(
                 json.dumps(summary_obj, indent=2, sort_keys=True),
@@ -640,18 +452,18 @@ def write_flow_logs(
         except Exception:
             pass
 
-
-    # 7. Footer
-    lines.append("---")
-    lines.append("_Report generated by **CATE v0.3 — Calypso Automated Testing Engine**_")
-    lines.append("")
-
     if write_summary_md:
-        summary_md_path.write_text("\n".join(lines), encoding="utf-8")
+        write_flow_summary_md(
+            summary_md_path,
+            results=results,
+            env=env,
+            initial_vars=initial_vars,
+        )
         written.append(summary_md_path)
 
 
-    # 8. Dump response bodies for failing steps
+
+
     # 8. Dump response bodies for failing steps
     if save_body:
         import re as _re
