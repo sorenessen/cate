@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 import asyncio
 import re
@@ -31,7 +31,7 @@ class FlowStep:
     url: str
     body_template: Optional[str] = None
     capture_cookies: bool = False
-    expect_status: Optional[int] = None
+    expect_status: Optional[Union[int, List[int]]] = None
 
     headers: Optional[Dict[str, str]] = None
 
@@ -298,13 +298,25 @@ def load_flows(path: Path | None = None) -> Dict[str, Flow]:
             if isinstance(raw_cookie_must_contain, dict):
                 cookie_must_contain = {str(k): str(v) for k, v in raw_cookie_must_contain.items()}
 
+            raw_status = step_cfg.get("expect_status")
+
+            if isinstance(raw_status, list):
+                expect_status = [int(s) for s in raw_status if isinstance(s, int)]
+                if not expect_status:
+                    expect_status = None
+            elif isinstance(raw_status, int):
+                expect_status = raw_status
+            else:
+                expect_status = None
+
+
             step = FlowStep(
                 name=step_name,
                 method=method,
                 url=url,
                 body_template=step_cfg.get("body_template"),
                 capture_cookies=bool(step_cfg.get("capture_cookies", False)),
-                expect_status=step_cfg.get("expect_status"),
+                expect_status=expect_status,
                 headers=headers,
                 max_latency_ms=step_cfg.get("max_latency_ms"),
                 body_must_contain=step_cfg.get("body_must_contain"),
@@ -435,8 +447,14 @@ def lint_flows(path: Path | None = None) -> tuple[dict[str, Flow], list[str], li
                 errors.append(f"{origin}: flows.{flow_name}.{step_name}.url is required and must be a non-empty string.")
 
             expect_status = scfg.get("expect_status")
-            if expect_status is not None and not isinstance(expect_status, int):
-                errors.append(f"{origin}: flows.{flow_name}.{step_name}.expect_status must be an int if set.")
+            if expect_status is not None:
+                if isinstance(expect_status, int):
+                    pass
+                elif isinstance(expect_status, list) and all(isinstance(s, int) for s in expect_status):
+                    pass
+                else:
+                    error("expect_status must be int or list[int]")
+
 
             retry_count = scfg.get("retry_count")
             if retry_count is not None and not isinstance(retry_count, int):
@@ -786,13 +804,17 @@ async def _run_flow_async(
 
                 # Status assertion
                 if step.expect_status is not None:
-                    if status == step.expect_status:
-                        assertions["status_ok"] = True
+                    expected = step.expect_status
+                    if isinstance(expected, list):
+                        status_ok = status in expected
                     else:
-                        assertions["status_ok"] = False
+                        status_ok = status == expected
+
+                    if not status_ok:
                         ok = False
-                        error_msg_parts.append(
-                            f"expected status {step.expect_status}, got {status}"
+                        exp = expected if isinstance(expected, list) else [expected]
+                        errors.append(
+                            f"expected status in {exp}, got {status}"
                         )
 
                 # Latency assertion

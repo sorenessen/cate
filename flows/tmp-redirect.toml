@@ -5,4 +5,5 @@ steps=["r"]
 [flows.redirect-demo.r]
 method="GET"
 url="https://httpbingo.org/redirect-to?url=https://httpbingo.org/json"
-expect_status=200
+expect_status=[302]
+follow_redirects = false
