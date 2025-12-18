@@ -504,6 +504,46 @@ def write_flow_logs(
             )
         lines.append("")
 
+    # Recon observations (if present)
+    recon_steps = [r for r in results if isinstance(r.get("recon"), dict) and r.get("recon")]
+
+    if recon_steps:
+        lines.append("")
+        lines.append("## Recon Observations")
+
+        for s in recon_steps:
+            step_name = s.get("step", "")
+            recon = s.get("recon", {})
+
+            lines.append("")
+            lines.append(f"### Step {step_name}")
+
+            chain = recon.get("redirect_chain")
+            if chain:
+                lines.append("")
+                lines.append("**Redirect chain:**")
+                for hop in chain:
+                    status = hop.get("status")
+                    location = hop.get("location")
+                    if location:
+                        lines.append(f"- {status} → {location}")
+                    else:
+                        lines.append(f"- {status}")
+
+
+            headers = recon.get("headers")
+            if isinstance(headers, dict) and headers:
+                lines.append("")
+                lines.append("**Observed headers:**")
+                for k, v in headers.items():
+                    lines.append(f"- `{k}`: `{v}`")
+
+            body_hash = recon.get("body_hash")
+            if body_hash:
+                lines.append("")
+                lines.append(f"**Body fingerprint:** `{body_hash}`")
+
+
     # 5. Assertion breakdown (new in v0.3.x)
     # Only render if at least one step has assertions or extracted vars.
     assertion_keys: set[str] = set()
