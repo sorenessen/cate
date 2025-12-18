@@ -3,6 +3,14 @@
 All notable changes to **CATE — Calypso Automated Testing Engine** are documented in this file.
 ---
 
+## v0.3.8 — Recon + Auth Pressure modes (reporting + schema)
+
+- Added: expect_status supports int | list[int] for flows
+- Improved: http-flow Markdown summary surfaces Recon Observations (redirect chain, fingerprints)
+- Improved: auth-pressure flow mode (your commit message)
+
+---
+
 ## v0.3.7 – Retry semantics + flow robustness + Flow linting + TOML diagnostics
 
 # CATE 0.3.7 — Flow linting + TOML diagnostics
