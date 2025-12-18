@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cate"
-version = "0.3.7"
+version = "0.3.8"
 description = "Calypso Automated Testing Engine – local HTTP fuzzing / brute-force tester"
 authors = ["Soren Essen <sorenessen@gmail.com>"]
 packages = [{ include = "cate" }]
