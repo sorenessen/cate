@@ -453,7 +453,7 @@ def lint_flows(path: Path | None = None) -> tuple[dict[str, Flow], list[str], li
                 elif isinstance(expect_status, list) and all(isinstance(s, int) for s in expect_status):
                     pass
                 else:
-                    error("expect_status must be int or list[int]")
+                    errors.append(f"{origin}: flows.{flow_name}.{step_name}.expect_status must be int or list[int].")
 
 
             retry_count = scfg.get("retry_count")
@@ -810,12 +810,13 @@ async def _run_flow_async(
                     else:
                         status_ok = status == expected
 
+                    assertions["status_ok"] = status_ok
+
                     if not status_ok:
                         ok = False
                         exp = expected if isinstance(expected, list) else [expected]
-                        errors.append(
-                            f"expected status in {exp}, got {status}"
-                        )
+                        error_msg_parts.append(f"expected status in {exp}, got {status}")
+
 
                 # Latency assertion
                 if step.max_latency_ms is not None:
@@ -1277,13 +1278,13 @@ async def _run_flow_async(
                     v = hdrs.get(k)
                     if v:
                         fp[k] = v
-                recon_meta["fingerprint_headers"] = fp
+                recon_meta["headers"] = fp
 
                 # 3) Body hash (safe diffing)
                 try:
                     content = resp.content or b""
                     if len(content) <= 2_000_000:
-                        recon_meta["body_sha256"] = hashlib.sha256(content).hexdigest()
+                        recon_meta["body_hash"] = hashlib.sha256(content).hexdigest()
                     else:
                         recon_meta["body_sha256"] = None
                         recon_meta["body_truncated_for_hash"] = len(content)
@@ -1325,8 +1326,8 @@ async def _run_flow_async(
                 mode_meta: Dict[str, Any] = {}
                 recon_meta: Dict[str, Any] = {
                     "redirect_chain": [],
-                    "fingerprint_headers": {},
-                    "body_sha256": None,
+                    "headers": {},
+                    "body_hash": None,
                 }
 
                 results.append(

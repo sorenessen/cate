@@ -12,12 +12,10 @@ import sys
 
 from cate import __version__
 from .engine import run_job
-from .logging_utils import write_results_jsonl, write_flow_summary_md
+from .logging_utils import write_results_jsonl, render_flow_summary_md
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 from .flows import load_flow, load_flows, run_flow, FlowNotFound, _apply_template_functions
-from cate.flows import load_flows, load_flow, FlowNotFound, lint_flows
-
 
 # Simple ANSI color helpers
 _RESET = "\033[0m"
@@ -453,13 +451,12 @@ def write_flow_logs(
             pass
 
     if write_summary_md:
-        write_flow_summary_md(
-            summary_md_path,
-            results=results,
-            env=env,
-            initial_vars=initial_vars,
+        summary_md_path.write_text(
+            render_flow_summary_md(results, env=env, initial_vars=initial_vars),
+            encoding="utf-8",
         )
         written.append(summary_md_path)
+
 
 
 
