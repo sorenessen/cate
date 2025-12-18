@@ -195,16 +195,3 @@ def write_results_jsonl(path: Path, results: Iterable[Result]) -> None:
             # ISO format for datetime
             data["timestamp"] = r.timestamp.isoformat() + "Z"
             f.write(json.dumps(data) + "\n")
-
-def write_flow_summary_md(
-    path: Path,
-    results: Sequence[Mapping[str, Any]],
-    env: Optional[str] = None,
-    initial_vars: Optional[Dict[str, Any]] = None,
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        render_flow_summary_md(results=results, env=env, initial_vars=initial_vars),
-        encoding="utf-8",
-    )
-
