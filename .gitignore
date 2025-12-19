@@ -27,3 +27,4 @@ RELEASE_NOTES_DRAFT.md
 dist/
 build/
 *.egg-info/
+lab-backup-*.tgz
