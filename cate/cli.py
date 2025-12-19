@@ -149,6 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     http_parser.add_argument(
+        "--urlencode-payload",
+        action="store_true",
+        help="URL-encode payload when substituting into the URL placeholder (recommended for query/path fuzzing).",
+    )
+
+
+    http_parser.add_argument(
         "--header",
         action="append",
         default=None,
@@ -718,6 +725,7 @@ def build_effective_config(args) -> Dict[str, Any]:
         max_rps = profile_data.get("max_rps", args.max_rps)
         stop_on_error_rate = profile_data.get("stop_on_error_rate", args.stop_on_error_rate)
         env = profile_data.get("env", args.env)
+        urlencode_payload = profile_data.get("urlencode_payload", args.urlencode_payload)
 
         profile_headers = profile_data.get("headers", {})
         if not isinstance(profile_headers, dict):
@@ -751,6 +759,8 @@ def build_effective_config(args) -> Dict[str, Any]:
         stop_on_error_rate = args.stop_on_error_rate
         env = args.env
         headers = headers_from_cli
+        urlencode_payload = args.urlencode_payload
+
 
     return {
         "url": url,
@@ -764,6 +774,8 @@ def build_effective_config(args) -> Dict[str, Any]:
         "stop_on_error_rate": stop_on_error_rate,
         "env": env,
         "headers": headers,
+        "urlencode_payload": urlencode_payload,
+
     }
 
 
@@ -782,7 +794,7 @@ def run_http_fuzz(
     i_understand_prod: bool,
     dry_run: bool,
     headers: Dict[str, str],
-) -> int:
+    urlencode_payload: bool) -> int:
     # Safety: block real prod runs without explicit flag
     if env == "prod" and not i_understand_prod and not dry_run:
         print(
@@ -818,10 +830,12 @@ def run_http_fuzz(
     print(
         _color(
             f"[CATE] Config: method={method}, concurrency={concurrency}, "
-            f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}",
+            f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}, "
+            f"urlencode_payload={urlencode_payload}",
             _FG_CYAN,
         )
     )
+
     if body_template:
         print(_color(f"[CATE] Using body template: {body_template!r}", _FG_CYAN))
     if headers:
@@ -839,6 +853,8 @@ def run_http_fuzz(
         body_template=body_template,
         max_rps=max_rps,
         stop_on_error_rate=stop_on_error_rate,
+        urlencode_payload=urlencode_payload,
+
     )
 
     async def _run() -> int:
@@ -937,6 +953,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             i_understand_prod=args.i_understand_prod,
             dry_run=args.dry_run,
             headers=cfg["headers"],
+            urlencode_payload=cfg["urlencode_payload"],
+
         )
 
         # Handle http-flow ------------------------------------------------------
