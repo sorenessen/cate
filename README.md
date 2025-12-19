@@ -481,6 +481,27 @@ tail -n 5 logs/waf-burst-safe.jsonl
 cat logs/waf-burst-safe.summary.md
 ---
 
+### URL encoding
+
+If your payloads contain spaces, quotes, or path separators and you want safe URL substitution, use:
+
+```
+cate http-fuzz \
+  --url "http://localhost:8080/login?b={payload}" \
+  --wordlist /tmp/payloads_raw.txt \
+  --urlencode-payload \
+  --output logs/encode.jsonl
+Notes:
+
+--urlencode-payload only affects {payload} substitution in the URL.
+
+It does not encode --body-template content.
+
+Example: %00 becomes %2500 because % is encoded as %25.
+
+```
+
+---
 ## Roadmap
 
 ### v0.2  
