@@ -538,19 +538,24 @@ def build_run_summary(results, config: JobConfig) -> Dict[str, Any]:
         if getattr(r, "error", None) or (status is not None and status >= 500):
             error_count += 1
             if len(error_examples) < 10:
+                ts = getattr(r, "timestamp", None)
+                if hasattr(ts, "isoformat"):
+                    ts = ts.isoformat()
+
                 error_examples.append(
                     {
                         "payload": r.payload,
                         "status_code": status,
                         "error": getattr(r, "error", None),
                         "elapsed_ms": getattr(r, "elapsed_ms", None),
-                        "timestamp": getattr(r, "timestamp", None),
+                        "timestamp": ts,
                     }
                 )
 
         elapsed = getattr(r, "elapsed_ms", None)
         if isinstance(elapsed, (int, float)):
             latencies.append(float(elapsed))
+
 
     error_rate = (error_count / total) if total > 0 else 0.0
 
@@ -575,7 +580,7 @@ def build_run_summary(results, config: JobConfig) -> Dict[str, Any]:
             "method": getattr(target, "method", None),
             "url": getattr(target, "url", None),
         },
-        "env": getattr(config, "env", getattr(config, "environment", None)),
+        "env": None,
         "wordlist": str(getattr(config, "wordlist_path", "")),
         "concurrency": config.concurrency,
         "timeout_seconds": config.timeout_seconds,
@@ -594,7 +599,7 @@ def render_markdown_summary(summary: Dict[str, Any]) -> str:
     """
     Turn the JSON summary dict into a human-readable Markdown report.
     """
-    status_codes = summary.get("status_codes", {}) or {}
+    status_codes = summary.get("status_counts", {}) or {}
     error_count = int(summary.get("error_count", 0) or 0)
     error_rate = float(summary.get("error_rate", 0.0) or 0.0)
 
@@ -633,7 +638,7 @@ def render_markdown_summary(summary: Dict[str, Any]) -> str:
     lines.append("## Latency (ms)\n")
     lines.append("| Metric | Value |")
     lines.append("|--------|-------|")
-    for key in ["count", "min_ms", "max_ms", "avg_ms"]:
+    for key in ["count", "min_ms", "max_ms", "mean_ms", "p50_ms", "p90_ms", "p99_ms"]:
         if key in latency:
             lines.append(f"| {key} | {latency[key]} |")
     lines.append("")
@@ -649,13 +654,15 @@ def write_run_summaries(
     output_path: Path,
     results,
     config: JobConfig,
-) -> None:
+    env: Optional[str] = None) -> None:
     """
     Given the main JSONL output path, write:
       - <name>.summary.json
       - <name>.summary.md
     """
     summary = build_run_summary(results, config)
+    if env:
+        summary["env"] = env
 
     json_path = output_path.with_suffix(".summary.json")
     md_path = output_path.with_suffix(".summary.md")
@@ -664,7 +671,7 @@ def write_run_summaries(
         import json
 
         json_path.write_text(
-            json.dumps(summary, indent=2, sort_keys=True),
+            json.dumps(summary, indent=2, sort_keys=True, default=str),
             encoding="utf-8",
         )
     except Exception as exc:  # best-effort; don't kill the run
@@ -865,13 +872,47 @@ def run_http_fuzz(
 
         if output_path is not None:
             print(_color(f"[CATE] Results written to {output_path}", _FG_GREEN))
-            write_run_summaries(output_path, results, config)
+            write_run_summaries(output_path, results, config, env=env)
 
         summarize_results(results)
         return 0
 
 
     return asyncio.run(_run())
+
+def lint_flows(flows_path: Optional[Path]) -> Tuple[Dict[str, Any], List[str], List[str]]:
+    """
+    Validate flows TOML can be loaded and has basic structure.
+    Returns: (flows_dict, warnings, errors)
+    """
+    warnings: List[str] = []
+    errors: List[str] = []
+
+    try:
+        flows = load_flows(flows_path)
+    except FileNotFoundError:
+        raise
+    except Exception as exc:
+        # TOML parse errors / unexpected exceptions
+        raise ValueError(f"[CATE] Failed to parse flows file: {exc}") from exc
+
+    if not flows:
+        warnings.append("No flows found.")
+
+    # Basic structural checks
+    for name, flow in flows.items():
+        if not getattr(flow, "steps", None):
+            errors.append(f"Flow '{name}' has no steps.")
+            continue
+        for idx, step in enumerate(flow.steps, 1):
+            if not getattr(step, "name", None):
+                errors.append(f"Flow '{name}' step {idx} is missing a name.")
+            if not getattr(step, "method", None):
+                errors.append(f"Flow '{name}' step {idx} is missing method.")
+            if not getattr(step, "url", None):
+                errors.append(f"Flow '{name}' step {idx} is missing url.")
+
+    return flows, warnings, errors
 
 
 def main(argv: Optional[List[str]] = None) -> int:

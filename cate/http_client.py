@@ -22,3 +22,13 @@ async def send_request(
         timeout=timeout,
     )
     return resp
+
+def extract_forensic_headers(resp) -> dict:
+    # keep it tight: only your demo/forensics headers
+    want = ["x-cate-waf", "x-cate-limit", "x-cate-upstream"]
+    out = {}
+    for k in want:
+        v = resp.headers.get(k)
+        if v is not None:
+            out[k] = v
+    return out
