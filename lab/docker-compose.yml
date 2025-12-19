@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  app:
+    build: ./app
+    container_name: cate_app
+    expose:
+      - "8080"
+
+  waf:
+    image: nginx:alpine
+    container_name: cate_waf
+    ports:
+      - "8080:80"
+    volumes:
+      - ./waf/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+
