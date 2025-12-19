@@ -463,6 +463,24 @@ logs/
 
 ---
 
+# Start lab
+colima start
+docker compose -f lab/docker-compose.yml up -d --build
+
+# Run WAF burst
+cate http-fuzz \
+  --url "http://localhost:8080/login?b={payload}" \
+  --wordlist /tmp/payloads_safe.txt \
+  --concurrency 20 \
+  --max-rps 100 \
+  --timeout 2 \
+  --output logs/waf-burst-safe.jsonl
+
+# Inspect artifacts
+tail -n 5 logs/waf-burst-safe.jsonl
+cat logs/waf-burst-safe.summary.md
+---
+
 ## Roadmap
 
 ### v0.2  
