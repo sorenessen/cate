@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, List, Optional
 from collections import deque
+from urllib.parse import quote
 
 import httpx
 
@@ -74,19 +75,23 @@ async def run_job(config: JobConfig) -> List[Result]:
                 headers = config.target.headers or {}
 
                 body: Optional[str] = None
+
+                # URL payload may be encoded (URL only), body stays raw
+                url_payload = quote(payload, safe="") if getattr(config, "urlencode_payload", False) else payload
+
                 
                 # If a body_template is provided, use it and still allow placeholder in URL.
                 if config.body_template is not None:
                     # Replace placeholder in URL if present
                     if config.placeholder in url:
-                        url = url.replace(config.placeholder, payload)
+                        url = url.replace(config.placeholder, url_payload)
                     # Replace placeholder in body template
                     body = config.body_template.replace(config.placeholder, payload)
                 else:
                     # Legacy behavior: if placeholder is in URL, substitute there,
                     # otherwise send the raw payload as the body.
                     if config.placeholder in url:
-                        url = url.replace(config.placeholder, payload)
+                        url = url.replace(config.placeholder, url_payload)
                     else:
                         body = payload
 
@@ -118,6 +123,7 @@ async def run_job(config: JobConfig) -> List[Result]:
                         content_length=content_length,
                         error=error,
                         timestamp=start,
+                        effective_url=url,
                     )
                 )
 

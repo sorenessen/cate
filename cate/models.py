@@ -29,6 +29,7 @@ class JobConfig:
     max_rps: float = 5.0               # max requests per second (global)
     stop_on_error_rate: float = 0.5    # abort if recent error fraction exceeds this
     error_window: int = 50             # how many recent requests to consider
+    urlencode_payload: bool = False
 
 
 @dataclass
@@ -39,3 +40,4 @@ class Result:
     content_length: Optional[int]
     error: Optional[str]
     timestamp: datetime
+    effective_url: Optional[str] = None
