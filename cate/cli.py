@@ -188,6 +188,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop if recent error fraction exceeds this (0–1). Default: 0.5",
     )
     http_parser.add_argument(
+        "--error-window",
+        type=int,
+        default=50,
+        help="Number of most-recent requests used to compute error rate. Default: 50",
+    )
+    http_parser.add_argument(
         "--env",
         type=str,
         default="dev",
@@ -726,6 +732,7 @@ def build_effective_config(args) -> Dict[str, Any]:
         stop_on_error_rate = profile_data.get("stop_on_error_rate", args.stop_on_error_rate)
         env = profile_data.get("env", args.env)
         urlencode_payload = profile_data.get("urlencode_payload", args.urlencode_payload)
+        error_window = profile_data.get("error_window", args.error_window)
 
         profile_headers = profile_data.get("headers", {})
         if not isinstance(profile_headers, dict):
@@ -760,6 +767,8 @@ def build_effective_config(args) -> Dict[str, Any]:
         env = args.env
         headers = headers_from_cli
         urlencode_payload = args.urlencode_payload
+        error_window = args.error_window
+
 
 
     return {
@@ -775,6 +784,7 @@ def build_effective_config(args) -> Dict[str, Any]:
         "env": env,
         "headers": headers,
         "urlencode_payload": urlencode_payload,
+        "error_window": error_window,
 
     }
 
@@ -794,7 +804,9 @@ def run_http_fuzz(
     i_understand_prod: bool,
     dry_run: bool,
     headers: Dict[str, str],
-    urlencode_payload: bool) -> int:
+    urlencode_payload: bool,
+    error_window: int,
+    ) -> int:
     # Safety: block real prod runs without explicit flag
     if env == "prod" and not i_understand_prod and not dry_run:
         print(
@@ -854,7 +866,7 @@ def run_http_fuzz(
         max_rps=max_rps,
         stop_on_error_rate=stop_on_error_rate,
         urlencode_payload=urlencode_payload,
-
+        error_window=error_window,
     )
 
     async def _run() -> int:
@@ -954,6 +966,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             dry_run=args.dry_run,
             headers=cfg["headers"],
             urlencode_payload=cfg["urlencode_payload"],
+            error_window=cfg["error_window"],
 
         )
 
