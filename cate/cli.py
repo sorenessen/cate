@@ -13,7 +13,7 @@ import sys
 
 from cate import __version__
 from .engine import run_job
-from .signals import compute_signals_from_summary
+from .signals import compute_signals_from_summary, finalize_signals
 from .logging_utils import write_results_jsonl, render_flow_summary_md, write_signals_json, write_signals_md
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
@@ -555,6 +555,8 @@ def write_flow_logs(
         try:
             signals = compute_signals_from_summary(summary_obj)
 
+            signals = finalize_signals(signals)
+
             # -----------------------------
             # Invariant / contract check: signals
             # -----------------------------
@@ -847,6 +849,9 @@ def write_run_summaries(
             print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
 
         signals["top_trigger"] = top_trigger
+
+        signals = finalize_signals(signals)
+
 
         signals_json_path = write_signals_json(signals, str(output_path))
         signals_md_path = write_signals_md(signals, str(output_path))
