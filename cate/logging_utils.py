@@ -252,6 +252,30 @@ def write_signals_md(signals: Dict[str, Any], output_path: str) -> str:
         lines.append(f"- **Notes:** {', '.join(f'`{n}`' for n in notes)}")
     lines.append("")
 
+    tf = signals.get("top_failure")
+    if isinstance(tf, dict) and tf:
+        lines.append("")
+        lines.append("## Top failure")
+        step = tf.get("step")
+        exp = tf.get("expected")
+        got = tf.get("status")
+        err = tf.get("error")
+        if step is not None:
+            lines.append(f"- Step: **{step}**")
+        if exp is not None:
+            lines.append(f"- Expected: **{exp}**")
+        if got is not None:
+            lines.append(f"- Got: **{got}**")
+        if err:
+            lines.append(f"- Error: `{err}`")
+
+    tt = signals.get("top_trigger")
+    if tt is not None and signals.get("kind") == "http-fuzz":
+        lines.append("")
+        lines.append("## Top trigger")
+        lines.append(f"- Payload: `{tt}`")
+
+
     counts = signals.get("counts") or {}
     kind = signals.get("kind") or "run"
 

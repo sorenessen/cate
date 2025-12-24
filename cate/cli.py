@@ -37,34 +37,43 @@ def _color(text: str, code: str) -> str:
     return f"{code}{text}{_RESET}"
 
 def _print_signal_verdict(signals: dict) -> None:
-    sev = str(signals.get("severity", "none")).upper()
-    ok = bool(signals.get("ok", False))
+    sev_raw = str(signals.get("severity", "none")).lower()
+    sev = sev_raw.upper()
     kind = signals.get("kind", "run")
     notes = signals.get("notes") or []
 
     notes_str = ", ".join(notes[:3]) if notes else "none"
-    status = "OK" if ok else "ALERT"
+
+    # label + color by severity (demo-friendly)
+    if sev_raw in ("none", "low"):
+        label = "OK"
+        color = _FG_GREEN
+    elif sev_raw == "medium":
+        label = "WARN"
+        color = _FG_YELLOW
+    else:
+        label = "ALERT"
+        color = _FG_RED
 
     extra = ""
 
-    # flow extra
     tf = signals.get("top_failure")
     if isinstance(tf, dict) and tf:
         step = tf.get("step")
         exp = tf.get("expected")
         got = tf.get("status")
-        if step or exp or got:
+        if step is not None or exp is not None or got is not None:
             extra += f", step={step}, expected={exp}, got={got}"
 
-    # fuzz extra
     tt = signals.get("top_trigger")
     if kind == "http-fuzz" and tt is not None:
         extra += f", trigger={tt!r}"
 
     print(_color(
-        f"[CATE] Signal verdict: {sev} ({status}) — kind={kind}, notes={notes_str}{extra}",
-        _FG_GREEN if ok else _FG_YELLOW
+        f"[CATE] Signal verdict: {sev} ({label}) — kind={kind}, notes={notes_str}{extra}",
+        color
     ))
+
 
 
 def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
