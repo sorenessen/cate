@@ -195,3 +195,119 @@ def write_results_jsonl(path: Path, results: Iterable[Result]) -> None:
             # ISO format for datetime
             data["timestamp"] = r.timestamp.isoformat() + "Z"
             f.write(json.dumps(data) + "\n")
+
+
+def write_signals_json(signals: Dict[str, Any], output_path: str) -> str:
+    """
+    Writes signals next to the summary artifacts.
+    output_path is the JSONL path (same one you already use).
+    Returns the signals json path.
+    """
+    base = Path(output_path)
+    signals_path = str(base.with_suffix(".signals.json"))
+    Path(signals_path).write_text(json.dumps(signals, indent=2, sort_keys=True), encoding="utf-8")
+    return signals_path
+
+
+def write_signals_md(signals: Dict[str, Any], output_path: str) -> str:
+    """
+    Writes <output_path>.signals.md.
+
+    Supports BOTH schemas:
+      A) legacy: {"verdict": {...}, "signals": [ {id,severity,message}, ... ]}
+      B) current: {"kind","ok","severity","counts","latency","notes", ...}
+    """
+    base = Path(output_path)
+    md_path = str(base.with_suffix(".signals.md"))
+
+    lines: List[str] = []
+
+    # --- Schema A (legacy) ---
+    if isinstance(signals.get("verdict"), dict) and isinstance(signals.get("signals"), list):
+        v = signals.get("verdict", {})
+        lines.append(f"# CATE Signals — {str(v.get('severity','info')).upper()}\n")
+        for s in signals.get("signals", []):
+            lines.append(f"## {s.get('id')} ({s.get('severity')})")
+            lines.append(s.get("message", ""))
+            lines.append("")
+        Path(md_path).write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+        return md_path
+
+    # --- Schema B (your current 0.4.1 signals.json) ---
+    severity = str(signals.get("severity", "info")).upper()
+    ok = bool(signals.get("ok", False))
+    kind = signals.get("kind", "run")
+    env = signals.get("env")
+
+    title_bits = [f"# CATE Signals — {severity}"]
+    if env:
+        title_bits[0] += f" ({env})"
+    lines.append(title_bits[0])
+    lines.append("")
+    lines.append(f"- **Kind:** `{kind}`")
+    lines.append(f"- **OK:** `{ok}`")
+
+    notes = signals.get("notes") or []
+    if notes:
+        lines.append(f"- **Notes:** {', '.join(f'`{n}`' for n in notes)}")
+    lines.append("")
+
+    counts = signals.get("counts") or {}
+    kind = signals.get("kind") or "run"
+
+    lines.append("## Counts\n")
+
+    if kind == "http-flow":
+        lines.append(f"- Steps: **{counts.get('steps', 0)}**")
+        lines.append(f"- Failures: **{counts.get('failures', 0)}**")
+        if "failure_rate" in counts:
+            lines.append(f"- Failure rate: **{counts.get('failure_rate', 0)}**")
+    else:
+        # http-fuzz (current labels)
+        lines.append(f"- Total payloads: **{counts.get('total_payloads', 0)}**")
+        lines.append(f"- Error count: **{counts.get('error_count', 0)}**")
+        lines.append(f"- Error rate: **{counts.get('error_rate', 0)}**")
+
+        status_counts = counts.get("status_counts") or {}
+        if status_counts:
+            lines.append("")
+            lines.append("### Status codes\n")
+            for k in sorted(status_counts.keys(), key=lambda x: int(x) if str(x).isdigit() else str(x)):
+                lines.append(f"- `{k}`: **{status_counts[k]}**")
+
+    lines.append("")
+
+
+    latency = signals.get("latency") or {}
+    if any(latency.get(k) is not None for k in ("p50_ms", "p90_ms", "p99_ms")):
+        lines.append("## Latency (ms)\n")
+        for k in ("p50_ms", "p90_ms", "p99_ms"):
+            if latency.get(k) is not None:
+                lines.append(f"- `{k}`: **{latency[k]}**")
+        lines.append("")
+
+    # Optional: if you later add groups/outliers into signals.json, this will render them.
+    groups = signals.get("groups") or []
+    if groups:
+        lines.append("## Response groups\n")
+        for g in groups:
+            lines.append(
+                f"- status={g.get('status_code', g.get('status'))}, "
+                f"size={g.get('content_length', g.get('size'))} "
+                f"→ **{g.get('count', 0)}**"
+            )
+        lines.append("")
+
+    outliers = signals.get("outliers") or []
+    if outliers:
+        lines.append("## Potential outliers\n")
+        for o in outliers:
+            lines.append(
+                f"- status={o.get('status_code', o.get('status'))}, "
+                f"size={o.get('content_length', o.get('size'))} "
+                f"→ **{o.get('count', 0)}**"
+            )
+        lines.append("")
+
+    Path(md_path).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return md_path
