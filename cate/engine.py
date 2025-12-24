@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator, List, Optional
 from collections import deque
@@ -64,10 +64,15 @@ async def run_job(config: JobConfig) -> List[Result]:
                     break
             recent_times.append(time.time())
 
-        def apply_payload(s: str, payload: str) -> str:
-            # Apply payload transform if enabled
+        def apply_payload_url(s: str, payload: str) -> str:
+            # URL substitution: honor urlencode_payload
             p = quote(payload, safe="") if config.urlencode_payload else payload
             return s.replace(config.placeholder, p)
+
+        def apply_payload_body(s: str, payload: str) -> str:
+            # BODY substitution: never encode (matches your test expectation)
+            return s.replace(config.placeholder, payload)
+
 
         async def worker(worker_id: int) -> None:
             while True:
@@ -94,16 +99,15 @@ async def run_job(config: JobConfig) -> List[Result]:
                         # Body template mode: substitute into URL (if placeholder exists) + body template
                         if config.body_template is not None:
                             if config.placeholder in url:
-                                url = apply_payload(url, payload)
-                            body = apply_payload(config.body_template, payload)
+                                url = apply_payload_url(url, payload)
+                            body = apply_payload_body(config.body_template, payload)
                         else:
-                            # Legacy mode: substitute into URL if placeholder exists; else body = raw payload
                             if config.placeholder in url:
-                                url = apply_payload(url, payload)
+                                url = apply_payload_url(url, payload)
                             else:
-                                body = payload  # NOTE: do not urlencode body unless you add a separate flag
+                                body = payload  # raw
 
-                        start = datetime.utcnow()
+                        start = datetime.now(timezone.utc)
                         error: Optional[str] = None
                         status_code: Optional[int] = None
                         content_length: Optional[int] = None
@@ -122,7 +126,7 @@ async def run_job(config: JobConfig) -> List[Result]:
                         except Exception as exc:  # noqa: BLE001
                             error = str(exc)
 
-                        elapsed_ms = (datetime.utcnow() - start).total_seconds() * 1000.0
+                        elapsed_ms = (datetime.now(timezone.utc) - start).total_seconds() * 1000.0
 
                         # Collect result
                         results.append(
