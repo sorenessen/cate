@@ -18,6 +18,16 @@ It currently supports:
 
 This is v0.1, intentionally simple, fast, and local-first.
 
+## Design Principles
+
+CATE is built around a strict set of reasoning guarantees that govern how observations,
+signals, and verdicts are produced.
+
+These guarantees are defined in the formal invariants document:
+
+➡️ **[CATE Formal Invariants](docs/invariants.md)**
+
+
 ## Table of Contents
 - [Features](#features)
   - [Safe by default](#safe-by-default)
