@@ -87,18 +87,33 @@ def validate_signals(signals: Dict[str, Any]) -> List[str]:
     if not isinstance(signals["severity"], str):
         raise ContractError("signals.severity must be str")
 
+    if signals["severity"] not in ("none", "low", "medium", "high"):
+        raise ContractError("signals.severity must be one of: none, low, medium, high")
+
+    # Validate containers BEFORE key membership checks
     if not isinstance(signals["counts"], dict):
         raise ContractError("signals.counts must be dict")
 
     if not isinstance(signals["latency"], dict):
         raise ContractError("signals.latency must be dict")
 
-    if signals["notes"] is not None and not isinstance(signals["notes"], list):
-        raise ContractError("signals.notes must be list or null")
+    if not isinstance(signals["notes"], list):
+        raise ContractError("signals.notes must be list")
+
+    # Kind-specific counts contract
+    kind = signals["kind"]
+    if kind == "http-flow":
+        for k in ("steps", "failures", "failure_rate"):
+            if k not in signals["counts"]:
+                raise ContractError(f"http-flow signals.counts missing '{k}'")
+    else:  # http-fuzz
+        for k in ("total_payloads", "error_count", "error_rate", "status_counts"):
+            if k not in signals["counts"]:
+                raise ContractError(f"http-fuzz signals.counts missing '{k}'")
 
     warnings: List[str] = []
 
-    # Optional extras
+    # Optional extras (warn-only)
     if "top_trigger" in signals and signals["top_trigger"] is not None and not isinstance(signals["top_trigger"], str):
         warnings.append("top_trigger_not_string")
 
@@ -106,3 +121,4 @@ def validate_signals(signals: Dict[str, Any]) -> List[str]:
         warnings.append("top_failure_not_dict")
 
     return warnings
+
