@@ -142,3 +142,32 @@ def compute_signals_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         },
         "notes": notes,
     }
+
+from .contracts import ContractError, validate_signals
+
+def finalize_signals(signals: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize + contract-check signals.
+    Call this after adding optional fields (top_trigger/top_failure).
+    """
+    if not isinstance(signals, dict):
+        raise ContractError("signals must be a dict")
+
+    signals.setdefault("notes", [])
+    signals.setdefault("counts", {})
+    signals.setdefault("latency", {})
+    signals.setdefault("severity", "none")
+    signals.setdefault("ok", False)
+
+    signals["severity"] = str(signals.get("severity", "none")).lower()
+    signals["ok"] = bool(signals.get("ok", False))
+
+    notes = signals.get("notes")
+    if notes is None:
+        signals["notes"] = []
+    elif not isinstance(notes, list):
+        signals["notes"] = [str(notes)]
+
+    validate_signals(signals)  # raises ContractError if invalid
+    return signals
+
