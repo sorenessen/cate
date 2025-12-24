@@ -18,6 +18,8 @@ from .logging_utils import write_results_jsonl, render_flow_summary_md, write_si
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 from .flows import load_flow, load_flows, run_flow, FlowNotFound, _apply_template_functions
+from .contracts import validate_summary, validate_signals, ContractError
+
 
 # Simple ANSI color helpers
 _RESET = "\033[0m"
@@ -495,6 +497,7 @@ def write_flow_logs(
             "avg_latency_ms": avg_ms,
             "final_vars": final_vars,
         }
+
         # Add a few concrete failure examples (for signals/verdict)
         import re as _re  # put this once near the top of the function if you prefer
 
@@ -503,7 +506,6 @@ def write_flow_logs(
             if r.get("ok"):
                 continue
 
-            # Pull expected from the error string since results don't store it as a field.
             expected = None
             err = r.get("error")
             if isinstance(err, str):
@@ -523,7 +525,7 @@ def write_flow_logs(
 
         summary_obj["fail_samples"] = fail_samples
 
-
+        # Write summary.json (best-effort)
         try:
             summary_json_path.write_text(
                 json.dumps(summary_obj, indent=2, sort_keys=True),
@@ -533,10 +535,38 @@ def write_flow_logs(
         except Exception:
             pass
 
+        # -----------------------------
+        # Invariant / contract check: summary
+        # -----------------------------
         try:
-            # compute signals from the summary object we just wrote
-            summary_obj["kind"] = "http-flow"
-            signals = compute_signals_from_summary(summary_obj)  # <-- REMOVE env=env
+            kind, warnings = validate_summary(summary_obj)
+            summary_obj["kind"] = kind  # normalize kind explicitly
+            if warnings:
+                print(_color(
+                    f"[CATE] Contract warnings (summary): {', '.join(warnings)}",
+                    _FG_YELLOW
+                ))
+        except ContractError as ce:
+            print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
+
+        # -----------------------------
+        # Compute + write signals (best-effort)
+        # -----------------------------
+        try:
+            signals = compute_signals_from_summary(summary_obj)
+
+            # -----------------------------
+            # Invariant / contract check: signals
+            # -----------------------------
+            try:
+                warnings = validate_signals(signals)
+                if warnings:
+                    print(_color(
+                        f"[CATE] Contract warnings (signals): {', '.join(warnings)}",
+                        _FG_YELLOW
+                    ))
+            except ContractError as ce:
+                print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
 
             sj = write_signals_json(signals, str(Path(output_prefix)))
             smd = write_signals_md(signals, str(Path(output_prefix)))
@@ -548,6 +578,7 @@ def write_flow_logs(
 
         except Exception as exc:
             print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
+
 
 
     if write_summary_md:
@@ -781,14 +812,40 @@ def write_run_summaries(
     except Exception as exc:
         print(_color(f"[CATE] Failed to write Markdown summary: {exc}", _FG_YELLOW))
 
-    # --- Signals (derived from summary) ---
+        # --- Signals (derived from summary) ---
     try:
+        # Pick a concrete example payload for the verdict line (best-effort)
         top_trigger = None
         ex = summary.get("error_examples") or []
         if ex:
             top_trigger = ex[0].get("payload")
 
+        # Contract-check the summary before computing signals
+        try:
+            kind, w = validate_summary(summary)
+            summary["kind"] = kind  # normalize kind
+            if w:
+                print(_color(
+                    f"[CATE] Contract warnings (summary): {', '.join(w)}",
+                    _FG_YELLOW
+                ))
+        except ContractError as ce:
+            print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
+
+        # Compute signals
         signals = compute_signals_from_summary(summary)
+
+        # Contract-check signals
+        try:
+            w = validate_signals(signals)
+            if w:
+                print(_color(
+                    f"[CATE] Contract warnings (signals): {', '.join(w)}",
+                    _FG_YELLOW
+                ))
+        except ContractError as ce:
+            print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
+
         signals["top_trigger"] = top_trigger
 
         signals_json_path = write_signals_json(signals, str(output_path))
@@ -801,6 +858,7 @@ def write_run_summaries(
 
     except Exception as exc:
         print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
+
 
 
 
