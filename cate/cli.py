@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List, Any
@@ -12,7 +13,8 @@ import sys
 
 from cate import __version__
 from .engine import run_job
-from .logging_utils import write_results_jsonl, render_flow_summary_md
+from .signals import compute_signals_from_summary
+from .logging_utils import write_results_jsonl, render_flow_summary_md, write_signals_json, write_signals_md
 from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 from .flows import load_flow, load_flows, run_flow, FlowNotFound, _apply_template_functions
@@ -33,6 +35,36 @@ def _color(text: str, code: str) -> str:
     if not _SUPPORTS_COLOR:
         return text
     return f"{code}{text}{_RESET}"
+
+def _print_signal_verdict(signals: dict) -> None:
+    sev = str(signals.get("severity", "none")).upper()
+    ok = bool(signals.get("ok", False))
+    kind = signals.get("kind", "run")
+    notes = signals.get("notes") or []
+
+    notes_str = ", ".join(notes[:3]) if notes else "none"
+    status = "OK" if ok else "ALERT"
+
+    extra = ""
+
+    # flow extra
+    tf = signals.get("top_failure")
+    if isinstance(tf, dict) and tf:
+        step = tf.get("step")
+        exp = tf.get("expected")
+        got = tf.get("status")
+        if step or exp or got:
+            extra += f", step={step}, expected={exp}, got={got}"
+
+    # fuzz extra
+    tt = signals.get("top_trigger")
+    if kind == "http-fuzz" and tt is not None:
+        extra += f", trigger={tt!r}"
+
+    print(_color(
+        f"[CATE] Signal verdict: {sev} ({status}) — kind={kind}, notes={notes_str}{extra}",
+        _FG_GREEN if ok else _FG_YELLOW
+    ))
 
 
 def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
@@ -454,6 +486,35 @@ def write_flow_logs(
             "avg_latency_ms": avg_ms,
             "final_vars": final_vars,
         }
+        # Add a few concrete failure examples (for signals/verdict)
+        import re as _re  # put this once near the top of the function if you prefer
+
+        fail_samples = []
+        for r in results:
+            if r.get("ok"):
+                continue
+
+            # Pull expected from the error string since results don't store it as a field.
+            expected = None
+            err = r.get("error")
+            if isinstance(err, str):
+                m = _re.search(r"expected status(?: in)? (\[[^\]]+\])", err)
+                if m:
+                    expected = m.group(1)
+
+            fail_samples.append({
+                "step": r.get("step"),
+                "status": r.get("status_code"),
+                "expected": expected,
+                "error": err,
+            })
+
+            if len(fail_samples) >= 3:
+                break
+
+        summary_obj["fail_samples"] = fail_samples
+
+
         try:
             summary_json_path.write_text(
                 json.dumps(summary_obj, indent=2, sort_keys=True),
@@ -463,15 +524,29 @@ def write_flow_logs(
         except Exception:
             pass
 
+        try:
+            # compute signals from the summary object we just wrote
+            summary_obj["kind"] = "http-flow"
+            signals = compute_signals_from_summary(summary_obj)  # <-- REMOVE env=env
+
+            sj = write_signals_json(signals, str(Path(output_prefix)))
+            smd = write_signals_md(signals, str(Path(output_prefix)))
+
+            print(_color(f"[CATE] Signals written to {sj}", _FG_GREEN))
+            print(_color(f"[CATE] Signals written to {smd}", _FG_GREEN))
+
+            _print_signal_verdict(signals)
+
+        except Exception as exc:
+            print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
+
+
     if write_summary_md:
         summary_md_path.write_text(
             render_flow_summary_md(results, env=env, initial_vars=initial_vars),
             encoding="utf-8",
         )
         written.append(summary_md_path)
-
-
-
 
 
     # 8. Dump response bodies for failing steps
@@ -690,11 +765,34 @@ def write_run_summaries(
     except Exception as exc:  # best-effort; don't kill the run
         print(_color(f"[CATE] Failed to write JSON summary: {exc}", _FG_YELLOW))
 
+    # Write summary.md
     try:
         md_text = render_markdown_summary(summary)
         md_path.write_text(md_text, encoding="utf-8")
     except Exception as exc:
         print(_color(f"[CATE] Failed to write Markdown summary: {exc}", _FG_YELLOW))
+
+    # --- Signals (derived from summary) ---
+    try:
+        top_trigger = None
+        ex = summary.get("error_examples") or []
+        if ex:
+            top_trigger = ex[0].get("payload")
+
+        signals = compute_signals_from_summary(summary)
+        signals["top_trigger"] = top_trigger
+
+        signals_json_path = write_signals_json(signals, str(output_path))
+        signals_md_path = write_signals_md(signals, str(output_path))
+
+        print(_color(f"[CATE] Signals written to {signals_json_path}", _FG_GREEN))
+        print(_color(f"[CATE] Signals written to {signals_md_path}", _FG_GREEN))
+
+        _print_signal_verdict(signals)
+
+    except Exception as exc:
+        print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
+
 
 
 def build_effective_config(args) -> Dict[str, Any]:
