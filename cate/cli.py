@@ -553,7 +553,9 @@ def write_flow_logs(
         # Compute + write signals (best-effort)
         # -----------------------------
         try:
-            signals = compute_signals_from_summary(summary_obj)
+            from cate.contracts import build_and_validate_signals
+
+            signals = build_and_validate_signals(summary_obj)
 
             signals = finalize_signals(signals)
 
@@ -835,7 +837,10 @@ def write_run_summaries(
             print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
 
         # Compute signals
-        signals = compute_signals_from_summary(summary)
+        from cate.contracts import build_and_validate_signals
+
+        signals = build_and_validate_signals(summary, strict=False)
+
 
         # Contract-check signals
         try:

@@ -122,3 +122,42 @@ def validate_signals(signals: Dict[str, Any]) -> List[str]:
 
     return warnings
 
+# ---------------------------------------------------------
+# Canonical signal pipeline
+# ---------------------------------------------------------
+
+from typing import Dict, Any
+from .signals import compute_signals_from_summary
+
+
+def build_and_validate_signals(
+    summary: Dict[str, Any],
+    *,
+    strict: bool = False,
+) -> Dict[str, Any]:
+    """
+    Canonical pipeline:
+      summary
+        → validate_summary
+        → compute_signals_from_summary
+        → validate_signals
+
+    If strict=True:
+      - any contract warning raises ContractError
+    """
+
+    kind, warnings = validate_summary(summary)
+    summary["kind"] = kind  # normalize explicitly
+
+    if strict and warnings:
+        raise ContractError(f"summary contract warnings: {warnings}")
+
+    signals = compute_signals_from_summary(summary)
+
+    signal_warnings = validate_signals(signals)
+    if strict and signal_warnings:
+        raise ContractError(f"signals contract warnings: {signal_warnings}")
+
+    return signals
+
+
