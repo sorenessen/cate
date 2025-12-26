@@ -19,6 +19,7 @@ from .models import JobConfig, Target
 from .profiles import load_profile, ProfileNotFound
 from .flows import load_flow, load_flows, run_flow, FlowNotFound, _apply_template_functions
 from .contracts import validate_summary, validate_signals, ContractError
+from .reporting import write_report_md
 
 
 # Simple ANSI color helpers
@@ -37,6 +38,7 @@ def _color(text: str, code: str) -> str:
     if not _SUPPORTS_COLOR:
         return text
     return f"{code}{text}{_RESET}"
+
 
 def _print_signal_verdict(signals: dict) -> None:
     sev_raw = str(signals.get("severity", "none")).lower()
@@ -71,11 +73,12 @@ def _print_signal_verdict(signals: dict) -> None:
     if kind == "http-fuzz" and tt is not None:
         extra += f", trigger={tt!r}"
 
-    print(_color(
-        f"[CATE] Signal verdict: {sev} ({label}) — kind={kind}, notes={notes_str}{extra}",
-        color
-    ))
-
+    print(
+        _color(
+            f"[CATE] Signal verdict: {sev} ({label}) — kind={kind}, notes={notes_str}{extra}",
+            color,
+        )
+    )
 
 
 def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
@@ -96,6 +99,7 @@ def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
         if key:
             headers[key] = value
     return headers
+
 
 def parse_vars(var_list: Optional[List[str]]) -> Dict[str, str]:
     """
@@ -197,7 +201,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="URL-encode payload when substituting into the URL placeholder (recommended for query/path fuzzing).",
     )
 
-
     http_parser.add_argument(
         "--header",
         action="append",
@@ -214,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Optional profile name to load from profiles.toml "
-             "(e.g. 'delphonix-login-dev').",
+        "(e.g. 'delphonix-login-dev').",
     )
 
     # Safety controls
@@ -374,7 +377,6 @@ def build_parser() -> argparse.ArgumentParser:
     http_flow_parser.add_argument("--no-summary-json", action="store_true", help="Do not write <output>.summary.json")
     http_flow_parser.add_argument("--quiet", action="store_true", help="Suppress 'Wrote:' line (still prints errors)")
 
-
     return parser
 
 
@@ -421,6 +423,7 @@ def summarize_results(results) -> None:
                 f"{len(payloads)} payload(s): {payloads}"
             )
 
+
 def write_flow_logs(
     output_prefix: str,
     results: List[Dict[str, Any]],
@@ -441,6 +444,10 @@ def write_flow_logs(
         for failing steps when save_body=True
     """
     written: List[Path] = []
+
+    sj: Optional[str] = None
+    smd: Optional[str] = None
+    signals: Optional[Dict[str, Any]] = None
 
     out = Path(output_prefix)
 
@@ -464,14 +471,12 @@ def write_flow_logs(
         if enabled:
             p.parent.mkdir(parents=True, exist_ok=True)
 
-
     # JSONL: one line per step (unchanged)
     if write_jsonl:
         with jsonl_path.open("w", encoding="utf-8") as f:
             for r in results:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
         written.append(jsonl_path)
-
 
     # --- Summaries (Markdown + JSON) ---
     total = len(results)
@@ -490,42 +495,42 @@ def write_flow_logs(
         if var_name is not None and var_value is not None:
             final_vars[var_name] = var_value
 
-    if write_summary_json:
-        summary_obj: Dict[str, Any] = {
-            "steps": total,
-            "failures": failures,
-            "avg_latency_ms": avg_ms,
-            "final_vars": final_vars,
-        }
+    # Build summary object in-memory ALWAYS (even if we don't write summary.json)
+    summary_obj: Dict[str, Any] = {
+        "steps": total,
+        "failures": failures,
+        "avg_latency_ms": avg_ms,
+        "final_vars": final_vars,
+    }
 
-        # Add a few concrete failure examples (for signals/verdict)
-        import re as _re  # put this once near the top of the function if you prefer
+    # Add a few concrete failure examples (for signals/verdict)
+    fail_samples: List[Dict[str, Any]] = []
+    for r in results:
+        if r.get("ok"):
+            continue
 
-        fail_samples = []
-        for r in results:
-            if r.get("ok"):
-                continue
+        expected = None
+        err = r.get("error")
+        if isinstance(err, str):
+            m = re.search(r"expected status(?: in)? (\[[^\]]+\])", err)
+            if m:
+                expected = m.group(1)
 
-            expected = None
-            err = r.get("error")
-            if isinstance(err, str):
-                m = _re.search(r"expected status(?: in)? (\[[^\]]+\])", err)
-                if m:
-                    expected = m.group(1)
-
-            fail_samples.append({
+        fail_samples.append(
+            {
                 "step": r.get("step"),
                 "status": r.get("status_code"),
                 "expected": expected,
                 "error": err,
-            })
+            }
+        )
 
-            if len(fail_samples) >= 3:
-                break
+        if len(fail_samples) >= 3:
+            break
+    summary_obj["fail_samples"] = fail_samples
 
-        summary_obj["fail_samples"] = fail_samples
-
-        # Write summary.json (best-effort)
+    # Write summary.json (optional, best-effort)
+    if write_summary_json:
         try:
             summary_json_path.write_text(
                 json.dumps(summary_obj, indent=2, sort_keys=True),
@@ -535,56 +540,56 @@ def write_flow_logs(
         except Exception:
             pass
 
-        # -----------------------------
-        # Invariant / contract check: summary
-        # -----------------------------
-        try:
-            kind, warnings = validate_summary(summary_obj)
-            summary_obj["kind"] = kind  # normalize kind explicitly
-            if warnings:
-                print(_color(
+    # -----------------------------
+    # Invariant / contract check: summary (best-effort)
+    # -----------------------------
+    try:
+        kind, warnings = validate_summary(summary_obj)
+        summary_obj["kind"] = kind  # normalize kind explicitly
+        if warnings:
+            print(
+                _color(
                     f"[CATE] Contract warnings (summary): {', '.join(warnings)}",
-                    _FG_YELLOW
-                ))
-        except ContractError as ce:
-            print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
+                    _FG_YELLOW,
+                )
+            )
+    except ContractError as ce:
+        print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
 
-        # -----------------------------
-        # Compute + write signals (best-effort)
-        # -----------------------------
+    # -----------------------------
+    # Compute + write signals (best-effort) — NOT gated on summary.json
+    # -----------------------------
+    try:
+        from cate.contracts import build_and_validate_signals
+
+        signals = build_and_validate_signals(summary_obj)
+        signals = finalize_signals(signals)
+
+        # Invariant / contract check: signals (best-effort)
         try:
-            from cate.contracts import build_and_validate_signals
-
-            signals = build_and_validate_signals(summary_obj)
-
-            signals = finalize_signals(signals)
-
-            # -----------------------------
-            # Invariant / contract check: signals
-            # -----------------------------
-            try:
-                warnings = validate_signals(signals)
-                if warnings:
-                    print(_color(
+            warnings = validate_signals(signals)
+            if warnings:
+                print(
+                    _color(
                         f"[CATE] Contract warnings (signals): {', '.join(warnings)}",
-                        _FG_YELLOW
-                    ))
-            except ContractError as ce:
-                print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
+                        _FG_YELLOW,
+                    )
+                )
+        except ContractError as ce:
+            print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
 
-            sj = write_signals_json(signals, str(Path(output_prefix)))
-            smd = write_signals_md(signals, str(Path(output_prefix)))
+        sj = write_signals_json(signals, str(Path(output_prefix)))
+        smd = write_signals_md(signals, str(Path(output_prefix)))
 
-            print(_color(f"[CATE] Signals written to {sj}", _FG_GREEN))
-            print(_color(f"[CATE] Signals written to {smd}", _FG_GREEN))
+        print(_color(f"[CATE] Signals written to {sj}", _FG_GREEN))
+        print(_color(f"[CATE] Signals written to {smd}", _FG_GREEN))
 
-            _print_signal_verdict(signals)
+        _print_signal_verdict(signals)
 
-        except Exception as exc:
-            print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
+    except Exception as exc:
+        print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
 
-
-
+    # Write summary.md (optional) — NOT gated on summary.json
     if write_summary_md:
         summary_md_path.write_text(
             render_flow_summary_md(results, env=env, initial_vars=initial_vars),
@@ -592,11 +597,27 @@ def write_flow_logs(
         )
         written.append(summary_md_path)
 
+    # -----------------------------
+    # Write report (flow) (best-effort) — independent of summary.md/json flags
+    # -----------------------------
+    try:
+        if sj and smd:
+            report_path = write_report_md(
+                output_prefix=str(Path(output_prefix)),
+                env=env,
+                kind=(signals or {}).get("kind", "http-flow"),
+                summary_json_path=str(summary_json_path) if write_summary_json else None,
+                summary_md_path=str(summary_md_path) if write_summary_md else None,
+                signals_json_path=sj,
+                signals_md_path=smd,
+            )
+            print(_color(f"[CATE] Report written to {report_path}", _FG_GREEN))
+            written.append(Path(report_path))
+    except Exception as exc:
+        print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
 
     # 8. Dump response bodies for failing steps
     if save_body:
-        import re as _re
-
         for idx, r in enumerate(results, 1):
             if r.get("ok"):
                 continue
@@ -606,7 +627,7 @@ def write_flow_logs(
                 continue
 
             step_name = str(r.get("step", f"step{idx}"))
-            safe_step = _re.sub(r"[^A-Za-z0-9_-]+", "_", step_name)
+            safe_step = re.sub(r"[^A-Za-z0-9_-]+", "_", step_name)
 
             body_path = Path(f"{output_prefix}.step{idx}_{safe_step}.body.txt")
             html_capture = Path(f"{output_prefix}.step{idx}_{safe_step}.body.html")
@@ -629,7 +650,6 @@ def write_flow_logs(
             except Exception:
                 # best-effort; don't kill the run if body write fails
                 pass
-
 
     return written
 
@@ -687,7 +707,6 @@ def build_run_summary(results, config: JobConfig) -> Dict[str, Any]:
         elapsed = getattr(r, "elapsed_ms", None)
         if isinstance(elapsed, (int, float)):
             latencies.append(float(elapsed))
-
 
     error_rate = (error_count / total) if total > 0 else 0.0
 
@@ -786,7 +805,8 @@ def write_run_summaries(
     output_path: Path,
     results,
     config: JobConfig,
-    env: Optional[str] = None) -> None:
+    env: Optional[str] = None,
+) -> None:
     """
     Given the main JSONL output path, write:
       - <name>.summary.json
@@ -829,10 +849,12 @@ def write_run_summaries(
             kind, w = validate_summary(summary)
             summary["kind"] = kind  # normalize kind
             if w:
-                print(_color(
-                    f"[CATE] Contract warnings (summary): {', '.join(w)}",
-                    _FG_YELLOW
-                ))
+                print(
+                    _color(
+                        f"[CATE] Contract warnings (summary): {', '.join(w)}",
+                        _FG_YELLOW,
+                    )
+                )
         except ContractError as ce:
             print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
 
@@ -841,15 +863,16 @@ def write_run_summaries(
 
         signals = build_and_validate_signals(summary, strict=False)
 
-
         # Contract-check signals
         try:
             w = validate_signals(signals)
             if w:
-                print(_color(
-                    f"[CATE] Contract warnings (signals): {', '.join(w)}",
-                    _FG_YELLOW
-                ))
+                print(
+                    _color(
+                        f"[CATE] Contract warnings (signals): {', '.join(w)}",
+                        _FG_YELLOW,
+                    )
+                )
         except ContractError as ce:
             print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
 
@@ -857,9 +880,22 @@ def write_run_summaries(
 
         signals = finalize_signals(signals)
 
-
         signals_json_path = write_signals_json(signals, str(output_path))
         signals_md_path = write_signals_md(signals, str(output_path))
+
+        try:
+            report_path = write_report_md(
+                output_prefix=str(output_path),  # use whatever your code calls it
+                env=env,
+                kind=signals.get("kind"),
+                summary_json_path=str(json_path),
+                summary_md_path=str(md_path),
+                signals_json_path=signals_json_path,
+                signals_md_path=signals_md_path,
+            )
+            print(_color(f"[CATE] Report written to {report_path}", _FG_GREEN))
+        except Exception as exc:
+            print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
 
         print(_color(f"[CATE] Signals written to {signals_json_path}", _FG_GREEN))
         print(_color(f"[CATE] Signals written to {signals_md_path}", _FG_GREEN))
@@ -868,8 +904,6 @@ def write_run_summaries(
 
     except Exception as exc:
         print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
-
-
 
 
 def build_effective_config(args) -> Dict[str, Any]:
@@ -944,8 +978,6 @@ def build_effective_config(args) -> Dict[str, Any]:
         urlencode_payload = args.urlencode_payload
         error_window = args.error_window
 
-
-
     return {
         "url": url,
         "method": method,
@@ -960,7 +992,6 @@ def build_effective_config(args) -> Dict[str, Any]:
         "headers": headers,
         "urlencode_payload": urlencode_payload,
         "error_window": error_window,
-
     }
 
 
@@ -981,7 +1012,7 @@ def run_http_fuzz(
     headers: Dict[str, str],
     urlencode_payload: bool,
     error_window: int,
-    ) -> int:
+) -> int:
     # Safety: block real prod runs without explicit flag
     if env == "prod" and not i_understand_prod and not dry_run:
         print(
@@ -1080,8 +1111,8 @@ def run_http_fuzz(
         summarize_results(results)
         return 0
 
-
     return asyncio.run(_run())
+
 
 def lint_flows(flows_path: Optional[Path]) -> Tuple[Dict[str, Any], List[str], List[str]]:
     """
@@ -1142,10 +1173,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             headers=cfg["headers"],
             urlencode_payload=cfg["urlencode_payload"],
             error_window=cfg["error_window"],
-
         )
 
-        # Handle http-flow ------------------------------------------------------
+    # Handle http-flow ------------------------------------------------------
     elif args.command == "http-flow":
         # Optional: allow overriding the flows file (default handled by flows module)
         flows_path = Path(args.flows_file) if getattr(args, "flows_file", None) else None
@@ -1184,7 +1214,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             print(_color("[CATE] Flow lint passed (no issues found).", _FG_GREEN))
             return 0
-
 
         # --list: enumerate flows and exit
         if args.list:
@@ -1242,7 +1271,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             if initial_vars:
                 print(_color(f"[CATE] Seeded flow vars: {initial_vars}", _FG_CYAN))
 
-
         # DRY RUN: show what *would* happen, including interpolated templates,
         # but do not send any HTTP requests (allowed even for prod).
         if args.dry_run:
@@ -1284,7 +1312,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             return 0
 
-
         # Safety: prevent accidental prod without explicit opt-in
         if args.env == "prod" and not args.i_understand_prod:
             print(
@@ -1309,12 +1336,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         ignore_step_stop_flags = bool(args.continue_on_fail)
 
         # CLI-provided variables for template interpolation
-        initial_vars: Dict[str, Any] = {}
+        initial_vars = {}
         if getattr(args, "var", None):
             initial_vars = parse_vars(args.var)
             if initial_vars:
                 print(_color(f"[CATE] Seeded flow vars: {initial_vars}", _FG_CYAN))
-
 
         results = run_flow(
             flow=flow,
@@ -1325,7 +1351,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             initial_vars=initial_vars,
             mode=args.mode,
         )
-
 
         print("\n[CATE] Flow results:")
         failures = 0
@@ -1391,12 +1416,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(_color("[CATE] Flow completed successfully.", _FG_GREEN))
         return 0
 
-
-
     # Fallback --------------------------------------------------------------
     parser.error("Unknown command")
     return 1
-
 
 
 if __name__ == "__main__":
