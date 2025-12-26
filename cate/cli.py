@@ -597,24 +597,45 @@ def write_flow_logs(
         )
         written.append(summary_md_path)
 
-    # -----------------------------
-    # Write report (flow) (best-effort) — independent of summary.md/json flags
-    # -----------------------------
-    try:
-        if sj and smd:
-            report_path = write_report_md(
-                output_prefix=str(Path(output_prefix)),
-                env=env,
-                kind=(signals or {}).get("kind", "http-flow"),
-                summary_json_path=str(summary_json_path) if write_summary_json else None,
-                summary_md_path=str(summary_md_path) if write_summary_md else None,
-                signals_json_path=sj,
-                signals_md_path=smd,
-            )
-            print(_color(f"[CATE] Report written to {report_path}", _FG_GREEN))
-            written.append(Path(report_path))
-    except Exception as exc:
-        print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
+        # -----------------------------
+        # Write report (flow) (best-effort)
+        # -----------------------------
+        try:
+            if sj and smd:
+                report_path = write_report_md(
+                    output_prefix=str(Path(output_prefix)),
+                    env=env,
+                    kind=(signals or {}).get("kind", "http-flow"),
+                    summary_json_path=str(summary_json_path) if write_summary_json else None,
+                    summary_md_path=str(summary_md_path) if write_summary_md else None,
+                    signals_json_path=sj,
+                    signals_md_path=smd,
+                )
+                print(_color(f"[CATE] Report written to {report_path}", _FG_GREEN))
+                written.append(Path(report_path))
+
+                # HTML report (best-effort)
+                try:
+                    from .reporting import write_report_html
+                    html_report_path = write_report_html(
+                        output_prefix=str(Path(output_prefix)),
+                        env=env,
+                        kind=(signals or {}).get("kind", "http-flow"),
+                        summary_json_path=str(summary_json_path) if write_summary_json else None,
+                        summary_md_path=str(summary_md_path) if write_summary_md else None,
+                        signals_json_path=sj,
+                        signals_md_path=smd,
+                        jsonl_path=str(jsonl_path) if write_jsonl else None,
+                    )
+                    print(_color(f"[CATE] HTML report written to {html_report_path}", _FG_GREEN))
+                    written.append(Path(html_report_path))
+                except Exception as exc:
+                    print(_color(f"[CATE] Failed to write HTML report: {exc}", _FG_YELLOW))
+
+        except Exception as exc:
+            print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
+
+
 
     # 8. Dump response bodies for failing steps
     if save_body:
@@ -883,9 +904,10 @@ def write_run_summaries(
         signals_json_path = write_signals_json(signals, str(output_path))
         signals_md_path = write_signals_md(signals, str(output_path))
 
+        # Markdown report (best-effort)
         try:
             report_path = write_report_md(
-                output_prefix=str(output_path),  # use whatever your code calls it
+                output_prefix=str(output_path),
                 env=env,
                 kind=signals.get("kind"),
                 summary_json_path=str(json_path),
@@ -897,10 +919,28 @@ def write_run_summaries(
         except Exception as exc:
             print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
 
+        # HTML report (best-effort)
+        try:
+            from .reporting import write_report_html
+
+            html_report_path = write_report_html(
+                output_prefix=str(output_path),
+                env=env,
+                kind=signals.get("kind"),
+                summary_json_path=str(json_path),
+                summary_md_path=str(md_path),
+                signals_json_path=signals_json_path,
+                signals_md_path=signals_md_path,
+                jsonl_path=str(output_path),  # fuzz JSONL == output_path
+            )
+            print(_color(f"[CATE] HTML report written to {html_report_path}", _FG_GREEN))
+        except Exception as exc:
+            print(_color(f"[CATE] Failed to write HTML report: {exc}", _FG_YELLOW))
+
         print(_color(f"[CATE] Signals written to {signals_json_path}", _FG_GREEN))
         print(_color(f"[CATE] Signals written to {signals_md_path}", _FG_GREEN))
-
         _print_signal_verdict(signals)
+
 
     except Exception as exc:
         print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
