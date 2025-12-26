@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -29,7 +28,6 @@ def _fmt_num(x: Any) -> str:
     if x is None:
         return "—"
     if isinstance(x, float):
-        # keep diffs stable but still readable
         return f"{x:.3f}".rstrip("0").rstrip(".")
     return str(x)
 
@@ -37,7 +35,209 @@ def _fmt_num(x: Any) -> str:
 def _artifact_name(path: Optional[str]) -> str:
     if not path:
         return "—"
-    return Path(path).name
+    p = Path(path)
+    return p.name if p.exists() else "—"
+
+
+def _best_counts(kind: str, summary: Optional[Dict[str, Any]], signals: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Return the best-available counts block for this run.
+    Prefer signals.counts (because signals may exist even when summary.json is disabled).
+    Fall back to summary keys.
+    """
+    counts: Dict[str, Any] = {}
+
+    sig_counts = (signals or {}).get("counts")
+    if isinstance(sig_counts, dict):
+        counts.update(sig_counts)
+
+    # For flow summaries we also have summary["steps"]/["failures"]
+    if kind == "http-flow" and summary:
+        if "steps" not in counts and "steps" in summary:
+            counts["steps"] = summary.get("steps")
+        if "failures" not in counts and "failures" in summary:
+            counts["failures"] = summary.get("failures")
+        if "failure_rate" not in counts and "steps" in summary and "failures" in summary:
+            try:
+                s = float(summary.get("steps") or 0)
+                f = float(summary.get("failures") or 0)
+                counts["failure_rate"] = (f / s) if s > 0 else 0.0
+            except Exception:
+                pass
+
+    # For fuzz summaries we have different keys
+    if kind == "http-fuzz" and summary:
+        for k in ("total_payloads", "error_count", "error_rate", "status_counts"):
+            if k not in counts and k in summary:
+                counts[k] = summary.get(k)
+
+    return counts
+
+
+def _best_latency(summary: Optional[Dict[str, Any]], signals: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Prefer signals.latency; fall back to summary.avg_latency_ms or summary.latency.
+    """
+    latency: Dict[str, Any] = {}
+
+    sig_lat = (signals or {}).get("latency")
+    if isinstance(sig_lat, dict):
+        latency.update(sig_lat)
+
+    if latency:
+        return latency
+
+    if isinstance(summary, dict):
+        # flow summary.json shape uses avg_latency_ms
+        if "avg_latency_ms" in summary:
+            latency["avg_ms"] = summary.get("avg_latency_ms")
+        # fuzz run summary has "latency" object
+        s_lat = summary.get("latency")
+        if isinstance(s_lat, dict):
+            # map mean_ms -> avg_ms for consistency if present
+            if "avg_ms" not in latency and "mean_ms" in s_lat:
+                latency["avg_ms"] = s_lat.get("mean_ms")
+            for k, v in s_lat.items():
+                latency.setdefault(k, v)
+
+    return latency
+
+
+def _best_ok(kind: str, summary: Optional[Dict[str, Any]], signals: Optional[Dict[str, Any]]) -> Optional[bool]:
+    """
+    Compute OK using the best available source:
+      1) signals.ok if present
+      2) summary-derived (failures==0 for flow; error_count==0 and error_rate==0 for fuzz)
+      3) None if insufficient
+    """
+    if isinstance(signals, dict) and "ok" in signals:
+        return bool(signals.get("ok"))
+
+    if not isinstance(summary, dict) or not summary:
+        return None
+
+    if kind == "http-flow":
+        if "failures" in summary:
+            try:
+                return int(summary.get("failures") or 0) == 0
+            except Exception:
+                return None
+
+    if kind == "http-fuzz":
+        try:
+            ec = int(summary.get("error_count") or 0) if "error_count" in summary else None
+            er = float(summary.get("error_rate") or 0.0) if "error_rate" in summary else None
+            if ec is None and er is None:
+                return None
+            return (ec or 0) == 0 and (er or 0.0) == 0.0
+        except Exception:
+            return None
+
+    return None
+
+
+def _render_exec_summary(
+    *,
+    kind: str,
+    ok: Optional[bool],
+    counts: Dict[str, Any],
+    latency: Dict[str, Any],
+    signals: Optional[Dict[str, Any]],
+) -> str:
+    """
+    Executive summary is designed to be correct even if some artifacts are missing.
+    """
+    notes = (signals or {}).get("notes") or []
+    if not isinstance(notes, list):
+        notes = []
+    notes_str = ", ".join(sorted(str(n) for n in notes)) if notes else "none"
+
+    lines: list[str] = []
+    lines.append("## Executive summary")
+    lines.append("")
+
+    # Determine steps/failures where possible
+    steps = counts.get("steps")
+    failures = counts.get("failures")
+
+    # Confidence heuristic
+    has_counts = steps is not None and failures is not None
+    has_latency = bool(latency.get("avg_ms") is not None or latency.get("mean_ms") is not None)
+    has_top_failure = isinstance((signals or {}).get("top_failure"), dict) and (signals or {}).get("top_failure")
+    confidence = "high" if (ok is not None and has_counts and has_latency) else "medium" if (ok is not None and (has_counts or has_latency or has_top_failure)) else "low"
+
+    # Main sentence
+    if ok is True:
+        if has_counts:
+            lines.append(f"No actionable issues detected. Flow completed successfully with {failures} failures across {steps} step(s).")
+        else:
+            lines.append("No actionable issues detected. Run completed successfully.")
+    elif ok is False:
+        # Flow failure language (works for fuzz too, but still ok)
+        if kind == "http-flow" and has_counts:
+            lines.append(f"Immediate attention recommended. Flow failed ({failures}/{steps} steps).")
+        else:
+            lines.append("Immediate attention recommended. Run indicates failures.")
+        tf = (signals or {}).get("top_failure")
+        if kind == "http-flow" and isinstance(tf, dict) and tf:
+            step = tf.get("step")
+            expected = tf.get("expected")
+            status = tf.get("status")
+            if step is not None and (expected is not None or status is not None):
+                lines[-1] += f" Top failure: step {step} expected {expected} got {status}."
+    else:
+        lines.append("Outcome unknown. Required artifacts were missing, so CATE could not determine pass/fail confidently.")
+
+    lines.append("")
+    # Key findings
+    kf: list[str] = []
+
+    if kind == "http-flow":
+        tf = (signals or {}).get("top_failure")
+        if isinstance(tf, dict) and tf:
+            kf.append(f"- Top failure at step `{tf.get('step')}`: expected `{tf.get('expected')}`, got `{tf.get('status')}`.")
+            if tf.get("error"):
+                kf.append(f"- Failure message: `{tf.get('error')}`.")
+
+    if kind == "http-fuzz":
+        tt = (signals or {}).get("top_trigger")
+        if isinstance(tt, str) and tt:
+            kf.append(f"- Top trigger payload: `{tt}`.")
+
+    avg_ms = latency.get("avg_ms")
+    if avg_ms is None and "mean_ms" in latency:
+        avg_ms = latency.get("mean_ms")
+    if avg_ms is not None:
+        kf.append(f"- Average step latency: `{_fmt_num(avg_ms)} ms`.")
+    if notes_str != "none":
+        kf.append(f"- Signals notes: `{notes_str}`.")
+
+    if kf:
+        lines.append("### Key findings")
+        lines.append("")
+        lines.extend(kf)
+        lines.append("")
+
+    # Recommended actions only when failing
+    if ok is False and kind == "http-flow":
+        ra: list[str] = []
+        tf = (signals or {}).get("top_failure")
+        if isinstance(tf, dict) and tf:
+            step = tf.get("step")
+            exp = tf.get("expected")
+            got = tf.get("status")
+            ra.append(f"- Confirm step `{step}` expectation is correct (expected `{exp}`); update flow contract if intentional.")
+            if str(got) == "302":
+                ra.append("- If redirects are expected, assert redirect status and validate the `Location` header target.")
+                ra.append("- If redirects are not expected, review gateway/proxy rules and authentication entrypoints for unintended redirects.")
+        if ra:
+            lines.append("### Recommended actions")
+            lines.append("")
+            lines.extend(ra)
+            lines.append("")
+
+    lines.append(f"**Confidence:** `{confidence}`")
+    return "\n".join(lines).rstrip()
 
 
 def render_report_md(
@@ -52,22 +252,28 @@ def render_report_md(
     signals_md_path: Optional[str],
 ) -> str:
     kind = str(kind or (signals or {}).get("kind") or (summary or {}).get("kind") or "run")
+
     severity = str((signals or {}).get("severity", "none")).upper()
-    ok = bool((signals or {}).get("ok", False))
     notes = (signals or {}).get("notes") or []
     if not isinstance(notes, list):
         notes = []
     notes = sorted(str(n) for n in notes)
 
+    counts = _best_counts(kind, summary, signals)
+    latency = _best_latency(summary, signals)
+    ok = _best_ok(kind, summary, signals)
+
     lines: list[str] = []
     lines.append(f"# CATE Report — {severity}")
+    lines.append("")
+    lines.append(_render_exec_summary(kind=kind, ok=ok, counts=counts, latency=latency, signals=signals))
     lines.append("")
     lines.append("## Overview")
     lines.append("")
     lines.append("| Field | Value |")
     lines.append("|------|-------|")
     lines.append(f"| Kind | `{kind}` |")
-    lines.append(f"| OK | `{_fmt_bool(ok)}` |")
+    lines.append(f"| OK | `{_fmt_bool(ok) if ok is not None else '—'}` |")
     if env:
         lines.append(f"| Env | `{env}` |")
     lines.append(f"| Notes | `{', '.join(notes) if notes else 'none'}` |")
@@ -102,10 +308,7 @@ def render_report_md(
         lines.append(f"- Payload: `{tt}`")
         lines.append("")
 
-    # Counts + latency (reuse signals structure)
-    counts = (signals or {}).get("counts") or {}
-    latency = (signals or {}).get("latency") or {}
-
+    # Counts
     if isinstance(counts, dict) and counts:
         lines.append("## Counts")
         lines.append("")
@@ -135,6 +338,7 @@ def render_report_md(
                 lines.append(f"- {k}: **{_fmt_num(counts.get(k))}**")
         lines.append("")
 
+    # Latency
     if isinstance(latency, dict) and latency:
         lines.append("## Latency (ms)")
         lines.append("")
@@ -149,7 +353,7 @@ def render_report_md(
                 lines.append(f"- `{k}`: **{_fmt_num(latency.get(k))}**")
         lines.append("")
 
-    # Artifacts table (this is the “shareable” part)
+    # Artifacts table
     lines.append("## Artifacts")
     lines.append("")
     lines.append("| Artifact | File |")
@@ -160,11 +364,10 @@ def render_report_md(
     lines.append(f"| Signals (md) | `{_artifact_name(signals_md_path)}` |")
     lines.append("")
 
-    # Optional: echo a tiny excerpt of summary shape (helps debugging)
+    # Optional summary snapshot
     if isinstance(summary, dict) and summary:
         lines.append("## Summary snapshot")
         lines.append("")
-        # stable key subset
         snap_keys = ["steps", "failures", "avg_latency_ms", "total_payloads", "error_count", "error_rate"]
         for k in snap_keys:
             if k in summary:
@@ -186,10 +389,6 @@ def write_report_md(
     signals_json_path: Optional[str] = None,
     signals_md_path: Optional[str] = None,
 ) -> str:
-    """
-    Writes <prefix>.report.md next to your other artifacts and returns the path.
-    Best-effort: if it can't read json artifacts, it still writes a report shell.
-    """
     out = _normalize_output_prefix(output_prefix)
     report_path = out.with_suffix(".report.md")
 
