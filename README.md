@@ -34,6 +34,7 @@ These guarantees are defined in the formal invariants document:
   - [GET / POST fuzzing](#get--post-fuzzing)
   - [Custom headers](#custom-headers)
   - [Rate limiting and error controls](#rate-limiting-and-error-controls)
+- [Interactive Reports (HTML)](#interactive-reports-html)
 - [Profiles (`profiles.toml`)](#profiles-profilestoml)
 - [Output format (JSONL)](#output-format-jsonl)
 - [Logging and reports (v0.2)](#logging-and-reports-v02)
