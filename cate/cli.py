@@ -836,6 +836,7 @@ def write_run_summaries(
     results,
     config: JobConfig,
     env: Optional[str] = None,
+    mode: Optional[str] = None,
 ) -> None:
     """
     Given the main JSONL output path, write:
@@ -845,6 +846,8 @@ def write_run_summaries(
     summary = build_run_summary(results, config)
     if env:
         summary["env"] = env
+    if mode:
+        summary["mode"] = mode
 
     json_path = output_path.with_suffix(".summary.json")
     md_path = output_path.with_suffix(".summary.md")
@@ -1061,6 +1064,7 @@ def run_http_fuzz(
     headers: Dict[str, str],
     urlencode_payload: bool,
     error_window: int,
+    mode: str,
 ) -> int:
     # Safety: block real prod runs without explicit flag
     if env == "prod" and not i_understand_prod and not dry_run:
@@ -1102,6 +1106,7 @@ def run_http_fuzz(
             _FG_CYAN,
         )
     )
+    print(_color(f"[CATE] Mode: {mode}", _FG_CYAN))
 
     if body_template:
         print(_color(f"[CATE] Using body template: {body_template!r}", _FG_CYAN))
@@ -1155,7 +1160,7 @@ def run_http_fuzz(
 
         if output_path is not None:
             print(_color(f"[CATE] Results written to {output_path}", _FG_GREEN))
-            write_run_summaries(output_path, results, config, env=env)
+            write_run_summaries(output_path, results, config, env=env, mode=mode)
 
         summarize_results(results)
         return 0
@@ -1222,6 +1227,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             headers=cfg["headers"],
             urlencode_payload=cfg["urlencode_payload"],
             error_window=cfg["error_window"],
+            mode=args.mode,
         )
 
     # Handle http-flow ------------------------------------------------------
