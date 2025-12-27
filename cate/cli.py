@@ -572,7 +572,9 @@ def write_flow_logs(
         from cate.contracts import build_and_validate_signals
 
         signals = build_and_validate_signals(summary_obj)
+        signals["mode"] = summary.get("mode", "default")
         signals = finalize_signals(signals)
+
 
         # Invariant / contract check: signals (best-effort)
         try:
@@ -895,6 +897,8 @@ def write_run_summaries(
         from cate.contracts import build_and_validate_signals
 
         signals = build_and_validate_signals(summary, strict=False)
+        signals["mode"] = summary.get("mode", "default")
+        signals = finalize_signals(signals)
 
         # Contract-check signals
         try:
