@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-rm -rf logs/verify
-mkdir -p logs/verify
+outdir="logs/verify"
+fuzz_ok="${outdir}/fuzz_ok"
+pass="${outdir}/pass"
+fail="${outdir}/fail"
+wordlist="${outdir}/payloads_demo.txt"
 
-# Fuzz sanity (should succeed and be non-HIGH)
-cat > logs/verify/payloads_demo.txt <<'EOF'
+rm -rf "$outdir"
+mkdir -p "$outdir"
+
+# -------------------------
+# Fuzz sanity (should succeed)
+# -------------------------
+cat > "$wordlist" <<'EOF'
 test
 cate
 "quote
@@ -16,41 +24,44 @@ EOF
 
 cate http-fuzz \
   --url "https://httpbingo.org/get?b={payload}" \
-  --wordlist logs/verify/payloads_demo.txt \
-  --output logs/verify/fuzz_ok
+  --wordlist "$wordlist" \
+  --output "$fuzz_ok"
 
 # Fuzz artifacts exist
-test -f "logs/verify/fuzz_ok"
-test -f "logs/verify/fuzz_ok.report.html"
-test -f "logs/verify/fuzz_ok.report.md"
-test -f "logs/verify/fuzz_ok.summary.json"
-test -f "logs/verify/fuzz_ok.signals.json"
+test -f "$fuzz_ok"
+test -f "${fuzz_ok}.report.html"
+test -f "${fuzz_ok}.report.md"
+test -f "${fuzz_ok}.summary.json"
+test -f "${fuzz_ok}.signals.json"
 
 # Fuzz report markers
-grep -q 'id="cate-data"' "logs/verify/fuzz_ok.report.html"
-grep -q "<title>CATE Report" "logs/verify/fuzz_ok.report.html"
-grep -q "## Executive summary" "logs/verify/fuzz_ok.report.md"
+grep -q 'id="cate-data"' "${fuzz_ok}.report.html"
+grep -q "<title>CATE Report" "${fuzz_ok}.report.html"
+grep -q "## Executive summary" "${fuzz_ok}.report.md"
 
-# Fuzz severity should be none for benign endpoint
-grep -qi '"severity": "high"' "logs/verify/fuzz_ok.signals.json" && {
+# Fuzz should not be HIGH severity on a benign endpoint
+if grep -qi '"severity": "high"' "${fuzz_ok}.signals.json"; then
   echo "ERROR: fuzz_ok severity is HIGH"
   exit 1
-}
+fi
 
+# -------------------------
+# Flow sanity (pass + expected fail)
+# -------------------------
 
 # Passing flow (must succeed)
 cate http-flow \
   --flows-file flows/tmp-redirect.toml \
   --flow redirect-demo \
-  --output logs/verify/pass \
+  --output "$pass" \
   --mode recon
 
-# Failing flow (must fail)
+# Failing flow (must fail, but is expected)
 set +e
 cate http-flow \
   --flows-file flows/tmp-redirect-fail.toml \
   --flow redirect-demo \
-  --output logs/verify/fail \
+  --output "$fail" \
   --mode recon
 fail_rc=$?
 set -euo pipefail
@@ -60,15 +71,14 @@ if [[ $fail_rc -eq 0 ]]; then
   exit 1
 fi
 
-# Assertions
-for f in pass fail; do
-  test -f "logs/verify/$f.report.html"
-  test -f "logs/verify/$f.report.md"
+# Assertions for both flow runs
+for prefix in "$pass" "$fail"; do
+  test -f "${prefix}.report.html"
+  test -f "${prefix}.report.md"
 
-  grep -q 'id="cate-data"' "logs/verify/$f.report.html"
-  grep -q "<title>CATE Report" "logs/verify/$f.report.html"
-  grep -q "## Executive summary" "logs/verify/$f.report.md"
+  grep -q 'id="cate-data"' "${prefix}.report.html"
+  grep -q "<title>CATE Report" "${prefix}.report.html"
+  grep -q "## Executive summary" "${prefix}.report.md"
 done
 
 echo "PASS: flow + fuzz reports/signals verified (including expected failure)"
-
