@@ -46,6 +46,32 @@ if grep -qi '"severity": "high"' "${fuzz_ok}.signals.json"; then
 fi
 
 # -------------------------
+# Fuzz fail sanity (must fail, but is expected)
+# -------------------------
+fuzz_fail="${outdir}/fuzz_fail"
+
+set +e
+cate http-fuzz \
+  --url "https://example.invalid/get?b={payload}" \
+  --wordlist "$wordlist" \
+  --output "$fuzz_fail"
+fuzz_fail_rc=$?
+set -euo pipefail
+
+# We don't currently rely on exit code for fuzz failures.
+# Assert via artifacts + HIGH severity signal instead.
+test -f "${fuzz_fail}.signals.json"
+test -f "${fuzz_fail}.summary.json"
+test -f "${fuzz_fail}.report.md"
+test -f "${fuzz_fail}.report.html"
+
+if ! grep -qi '"severity": "high"' "${fuzz_fail}.signals.json"; then
+  echo "ERROR: expected fuzz_fail severity to be HIGH"
+  cat "${fuzz_fail}.signals.json"
+  exit 1
+fi
+
+# -------------------------
 # Flow sanity (pass + expected fail)
 # -------------------------
 
