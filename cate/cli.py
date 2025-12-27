@@ -257,6 +257,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show what would be executed, but do not send any HTTP requests.",
     )
 
+    http_parser.add_argument(
+        "--mode",
+        type=str,
+        default="default",
+        choices=["default", "recon", "auth-pressure"],  # keep consistent with http-flow
+        help="Assessment mode: default | recon | auth-pressure",
+    )
+
+
     http_flow_parser = subparsers.add_parser(
         "http-flow",
         help="Run a multi-step HTTP flow defined in flows.toml",
