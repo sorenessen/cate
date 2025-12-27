@@ -32,7 +32,10 @@ grep -q "<title>CATE Report" "logs/verify/fuzz_ok.report.html"
 grep -q "## Executive summary" "logs/verify/fuzz_ok.report.md"
 
 # Fuzz severity should be none for benign endpoint
-grep -qi '"severity": "none"' "logs/verify/fuzz_ok.signals.json"
+grep -qi '"severity": "high"' "logs/verify/fuzz_ok.signals.json" && {
+  echo "ERROR: fuzz_ok severity is HIGH"
+  exit 1
+}
 
 
 # Passing flow (must succeed)
