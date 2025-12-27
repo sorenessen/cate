@@ -154,6 +154,29 @@ def build_and_validate_signals(
 
     signals = compute_signals_from_summary(summary)
 
+    # Ensure mode is carried into signals
+    mode = str(summary.get("mode", "default") or "default")
+    signals["mode"] = mode
+
+    # Mode-aware severity policy (v0.4.6 scope: start here)
+    sev = str(signals.get("severity", "none") or "none").lower()
+
+    if mode == "recon":
+        # Recon should bias toward observation: cap severity.
+        # (Keeps "none/low/medium", avoids "high/critical" style escalation.)
+        cap = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+        # cap at medium
+        if cap.get(sev, 0) > cap["medium"]:
+            signals["severity"] = "medium"
+    elif mode == "auth-pressure":
+        # Auth pressure is intentionally spiky; treat suspicious auth/rate-limit signals as at least "medium"
+        # (This assumes compute_signals_from_summary already sets notes like "auth_failures" / "rate_limited")
+        notes = signals.get("notes") or []
+        if any(n in ("rate_limited", "lockout_indicator", "auth_anomaly") for n in notes):
+            if sev in ("none", "low"):
+                signals["severity"] = "medium"
+
+
     signal_warnings = validate_signals(signals)
     if strict and signal_warnings:
         raise ContractError(f"signals contract warnings: {signal_warnings}")
