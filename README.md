@@ -98,6 +98,31 @@ python -m cate.cli http-fuzz \
 
 ---
 
+## Interactive Reports (HTML)
+
+CATE generates a **self-contained, offline HTML report** for every run.
+This report is the primary human-facing artifact and is safe to share with
+teammates, stakeholders, or clients.
+
+The HTML report includes:
+
+- Executive summary with severity and confidence
+- Key findings and recommended actions
+- Linked artifacts (JSON, Markdown, signals)
+- Interactive run details (filter, search, expand)
+- Embedded raw data (no external dependencies)
+
+### Generate a report (http-flow)
+
+```bash
+cate http-flow \
+  --flows-file flows/tmp-redirect.toml \
+  --flow redirect-demo \
+  --output logs/demo \
+  --mode recon
+  ```
+
+---
 ## Profiles (`profiles.toml`)
 
 You can define reusable configurations:
