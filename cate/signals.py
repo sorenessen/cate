@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-
 def _safe_float(x: Any) -> Optional[float]:
     try:
         if x is None:
@@ -25,14 +24,17 @@ def _safe_int(x: Any) -> Optional[int]:
 def compute_signals_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     """
     Compute lightweight "signals" from either:
-      - http-fuzz summary (your build_run_summary output)
-      - http-flow summary (your write_flow_logs summary_obj)
+      - http-fuzz summary (build_run_summary output)
+      - http-flow summary (write_flow_logs summary_obj)
 
     Returns a JSON-serializable dict meant for:
       - quick triage
       - trend tracking
       - later scoring/risk heuristics
     """
+    # mode can be present in either summary shape (your cli/contract propagation)
+    mode = str(summary.get("mode", "default")).lower().strip() or "default"
+
     # Detect which summary shape we received
     is_flow = "steps" in summary and "failures" in summary
 
@@ -67,9 +69,9 @@ def compute_signals_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         fail_samples = summary.get("fail_samples") or []
         top_failure = fail_samples[0] if fail_samples else None
 
-
         return {
             "kind": "http-flow",
+            "mode": mode,  # <-- propagate
             "ok": ok,
             "severity": severity,
             "counts": {
@@ -85,24 +87,41 @@ def compute_signals_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
             "top_failure": top_failure,
         }
 
-
-    # http-fuzz summary shape (build_run_summary)
+    # -------------------------
+    # http-fuzz summary shape
+    # -------------------------
     total = _safe_int(summary.get("total_payloads")) or 0
     error_count = _safe_int(summary.get("error_count")) or 0
     error_rate = _safe_float(summary.get("error_rate")) or 0.0
     status_counts = summary.get("status_counts") or {}
     latency = summary.get("latency") or {}
 
-    # Basic derived signals
-    has_429 = str(429) in status_counts
-    has_401 = str(401) in status_counts
-    has_403 = str(403) in status_counts
-    has_5xx = any(str(k).isdigit() and int(k) >= 500 for k in status_counts.keys())
+    def _count(code: int) -> int:
+        # status_counts keys are strings in your summary (e.g. "404": 1)
+        v = status_counts.get(str(code))
+        return int(v) if isinstance(v, (int, float)) else 0
+
+    # Basic derived signals (count-aware)
+    has_429 = _count(429) > 0
+    has_401 = _count(401) > 0
+    has_403 = _count(403) > 0
+    has_404 = _count(404) > 0
+
+    has_5xx = False
+    for k, v in status_counts.items():
+        try:
+            kk = int(str(k))
+        except Exception:
+            continue
+        if kk >= 500 and isinstance(v, (int, float)) and int(v) > 0:
+            has_5xx = True
+            break
 
     p50 = _safe_float(latency.get("p50_ms"))
     p90 = _safe_float(latency.get("p90_ms"))
     p99 = _safe_float(latency.get("p99_ms"))
 
+    # "ok" is still your original definition (errors/5xx/error_rate)
     ok = (error_count == 0) and (not has_5xx) and (error_rate == 0.0)
 
     notes: List[str] = []
@@ -115,7 +134,13 @@ def compute_signals_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     if total > 0 and error_rate >= 0.5:
         notes.append("high_error_rate")
 
-    # Simple severity (you can evolve this later)
+    # 404 handling:
+    # - recon: keep informational (don’t change severity unless you want it)
+    # - default/auth-pressure: mark as notable + low severity even if ok=True
+    if has_404 and mode != "recon":
+        notes.append("not_found_404_seen")
+
+    # Simple severity (mode-aware baseline)
     severity = "none"
     if not ok:
         if has_5xx or error_rate >= 0.5:
@@ -124,9 +149,14 @@ def compute_signals_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
             severity = "medium"
         else:
             severity = "low"
+    else:
+        # ok run, but still noteworthy in some cases (like 404 in default/auth-pressure)
+        if has_404 and mode != "recon":
+            severity = "low"
 
     return {
         "kind": "http-fuzz",
+        "mode": mode,  # <-- propagate
         "ok": ok,
         "severity": severity,
         "counts": {
@@ -143,9 +173,9 @@ def compute_signals_from_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         "notes": notes,
     }
 
-from .contracts import ContractError, validate_signals
 
 def finalize_signals(signals: Dict[str, Any]) -> Dict[str, Any]:
+    from .contracts import ContractError, validate_signals
     """
     Normalize + contract-check signals.
     Call this after adding optional fields (top_trigger/top_failure).
@@ -159,12 +189,12 @@ def finalize_signals(signals: Dict[str, Any]) -> Dict[str, Any]:
     signals.setdefault("latency", {})
     signals.setdefault("severity", "none")
     signals.setdefault("ok", False)
-    signals.setdefault("mode", "default")  # <— add
+    signals.setdefault("mode", "default")
 
     # Normalize core fields
     signals["severity"] = str(signals.get("severity", "none")).lower().strip()
     signals["ok"] = bool(signals.get("ok", False))
-    signals["mode"] = str(signals.get("mode", "default")).lower().strip()  # <— add
+    signals["mode"] = str(signals.get("mode", "default")).lower().strip() or "default"
 
     notes = signals.get("notes")
     if notes is None:
@@ -174,6 +204,12 @@ def finalize_signals(signals: Dict[str, Any]) -> Dict[str, Any]:
     else:
         notes_list = [str(notes)]
     signals["notes"] = notes_list
+
+    def add_note(note: str) -> None:
+        # prevent duplicates if finalize_signals runs twice
+        if note not in notes_list:
+            notes_list.append(note)
+
 
     # ---- Mode-aware severity policy ----
     mode = signals["mode"]
@@ -203,7 +239,7 @@ def finalize_signals(signals: Dict[str, Any]) -> Dict[str, Any]:
         if not hard_fail:
             new_sev = clamp_max(sev, "medium")
             if new_sev != sev:
-                notes_list.append("mode=recon: severity clamped")
+                add_note("mode=recon: severity clamped")
                 sev = new_sev
 
     elif mode == "auth-pressure":
@@ -215,7 +251,7 @@ def finalize_signals(signals: Dict[str, Any]) -> Dict[str, Any]:
         if any(m in notes_lc for m in bump_markers):
             new_sev = bump(sev, +1)
             if new_sev != sev:
-                notes_list.append("mode=auth-pressure: severity bumped")
+                add_note("mode=auth-pressure: severity bumped")
                 sev = new_sev
 
     signals["severity"] = sev
@@ -224,4 +260,3 @@ def finalize_signals(signals: Dict[str, Any]) -> Dict[str, Any]:
 
     validate_signals(signals)  # raises ContractError if invalid
     return signals
-

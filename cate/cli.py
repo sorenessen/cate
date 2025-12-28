@@ -438,6 +438,7 @@ def write_flow_logs(
     results: List[Dict[str, Any]],
     env: Optional[str] = None,
     initial_vars: Optional[Dict[str, Any]] = None,
+    mode: Optional[str] = None,
     save_body: bool = False,
     write_jsonl: bool = True,
     write_summary_md: bool = True,
@@ -512,6 +513,10 @@ def write_flow_logs(
         "final_vars": final_vars,
     }
 
+    if mode:
+        summary_obj["mode"] = mode
+
+
     # Add a few concrete failure examples (for signals/verdict)
     fail_samples: List[Dict[str, Any]] = []
     for r in results:
@@ -572,7 +577,7 @@ def write_flow_logs(
         from cate.contracts import build_and_validate_signals
 
         signals = build_and_validate_signals(summary_obj)
-        signals["mode"] = summary.get("mode", "default")
+        signals["mode"] = summary_obj.get("mode", "default")
         signals = finalize_signals(signals)
 
 
@@ -648,14 +653,18 @@ def write_flow_logs(
 
 
 
-    # 8. Dump response bodies for failing steps
+    # 8. Dump response bodies for failing steps AND final step (end-of-ride proof)
     if save_body:
+        base_dir = Path(output_prefix).parent  # where the report/jsonl live
+
         for idx, r in enumerate(results, 1):
-            if r.get("ok"):
+            is_last = (idx == len(results))
+            should_snapshot = (not r.get("ok")) or is_last
+            if not should_snapshot:
                 continue
 
             body = r.get("body")
-            if not body:
+            if body is None:
                 continue
 
             step_name = str(r.get("step", f"step{idx}"))
@@ -665,23 +674,33 @@ def write_flow_logs(
             html_capture = Path(f"{output_prefix}.step{idx}_{safe_step}.body.html")
 
             try:
-                # Ensure directory exists for body dumps
                 body_path.parent.mkdir(parents=True, exist_ok=True)
 
-                # Always write plain text body for grepping / diffing
                 body_text = body if isinstance(body, str) else str(body)
                 body_path.write_text(body_text, encoding="utf-8")
                 written.append(body_path)
 
-                # Best-effort HTML detection – only write .html if it looks like HTML
+                # Store RELATIVE paths so offline HTML links work
+                try:
+                    r["snapshot_txt"] = str(body_path.relative_to(base_dir))
+                except Exception:
+                    r["snapshot_txt"] = str(body_path)
+
                 lower = body_text.lower()
                 if "<html" in lower or "<!doctype html" in lower:
                     html_capture.write_text(body_text, encoding="utf-8")
                     written.append(html_capture)
+                    try:
+                        r["snapshot_html"] = str(html_capture.relative_to(base_dir))
+                    except Exception:
+                        r["snapshot_html"] = str(html_capture)
+
+                # Optional nicety: mark what this snapshot represents
+                r["snapshot_reason"] = "final_step" if is_last and r.get("ok") else "failure"
 
             except Exception:
-                # best-effort; don't kill the run if body write fails
                 pass
+
 
     return written
 
@@ -898,24 +917,9 @@ def write_run_summaries(
 
         signals = build_and_validate_signals(summary, strict=False)
         signals["mode"] = summary.get("mode", "default")
-        signals = finalize_signals(signals)
-
-        # Contract-check signals
-        try:
-            w = validate_signals(signals)
-            if w:
-                print(
-                    _color(
-                        f"[CATE] Contract warnings (signals): {', '.join(w)}",
-                        _FG_YELLOW,
-                    )
-                )
-        except ContractError as ce:
-            print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
-
         signals["top_trigger"] = top_trigger
-
         signals = finalize_signals(signals)
+
 
         signals_json_path = write_signals_json(signals, str(output_path))
         signals_md_path = write_signals_md(signals, str(output_path))
@@ -1450,6 +1454,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 results=results,
                 env=args.env,
                 initial_vars=initial_vars,
+                mode=args.mode,
                 save_body=args.save_body,
                 write_jsonl=not getattr(args, "no_jsonl", False),
                 write_summary_md=not getattr(args, "no_summary_md", False),
