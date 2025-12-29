@@ -4,23 +4,18 @@ import argparse
 import asyncio
 import json
 import re
+import sys
+import zipfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, List, Optional, Tuple
-import sys
 
 from cate import __version__
 from .contracts import ContractError, validate_signals, validate_summary
 from .engine import run_job
-from .flows import (
-    FlowNotFound,
-    _apply_template_functions,
-    load_flow,
-    load_flows,
-    run_flow,
-)
+from .flows import FlowNotFound, _apply_template_functions, load_flow, load_flows, run_flow
 from .logging_utils import (
     render_flow_summary_md,
     write_evidence_manifest,
@@ -33,8 +28,9 @@ from .profiles import ProfileNotFound, load_profile
 from .reporting import write_report_md
 from .signals import finalize_signals
 
-
+# -----------------------------
 # Simple ANSI color helpers
+# -----------------------------
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 _FG_CYAN = "\033[36m"
@@ -93,6 +89,78 @@ def _print_signal_verdict(signals: dict) -> None:
     )
 
 
+# -----------------------------
+# Bundling
+# -----------------------------
+def bundle_from_manifest(manifest_path: Path, bundle_path: Optional[Path] = None) -> Path:
+    """
+    Create a zip bundle containing the manifest + all artifact paths listed in it.
+    Returns the bundle zip path.
+
+    Default output name:
+      <prefix>.manifest.json -> <prefix>.bundle.zip
+    """
+    manifest_path = Path(manifest_path)
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    if bundle_path is None:
+        name = manifest_path.name
+        if name.endswith(".manifest.json"):
+            out_name = name.replace(".manifest.json", ".bundle.zip")
+            bundle_path = manifest_path.with_name(out_name)
+        else:
+            bundle_path = manifest_path.with_suffix("").with_suffix(".bundle.zip")
+
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+
+    files: List[Path] = [manifest_path]
+    artifacts = data.get("artifacts") or {}
+
+    def _collect(v: Any) -> None:
+        if isinstance(v, dict) and "path" in v:
+            try:
+                p = Path(v["path"])
+                files.append(p)
+            except Exception:
+                pass
+        elif isinstance(v, list):
+            for item in v:
+                _collect(item)
+        elif isinstance(v, dict):
+            for vv in v.values():
+                _collect(vv)
+
+    _collect(artifacts)
+
+    # de-dupe and keep existing files only
+    uniq: List[Path] = []
+    seen: set[str] = set()
+    for p in files:
+        rp = str(p)
+        if rp in seen:
+            continue
+        seen.add(rp)
+        if p.exists():
+            uniq.append(p)
+
+    cwd = Path.cwd().resolve()
+    with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        for p in uniq:
+            try:
+                arcname = str(p.resolve().relative_to(cwd))
+            except Exception:
+                arcname = p.name
+            z.write(p, arcname=arcname)
+
+    return bundle_path
+
+
+# -----------------------------
+# Exit snapshot
+# -----------------------------
 def capture_exit_snapshot(url: str, output_prefix: str, status: str) -> str:
     """
     Best-effort browser screenshot using Playwright (if available).
@@ -105,7 +173,6 @@ def capture_exit_snapshot(url: str, output_prefix: str, status: str) -> str:
       pip install playwright
       playwright install chromium
     """
-    # Lazy import so CATE still runs without playwright installed
     try:
         from playwright.sync_api import sync_playwright  # type: ignore
     except Exception as e:
@@ -122,13 +189,16 @@ def capture_exit_snapshot(url: str, output_prefix: str, status: str) -> str:
         page = browser.new_page()
         page.set_viewport_size({"width": 1440, "height": 900})
         page.goto(url, wait_until="networkidle", timeout=30_000)
-        page.wait_for_timeout(500)  # small settle
+        page.wait_for_timeout(500)
         page.screenshot(path=str(out_png), full_page=True)
         browser.close()
 
     return str(out_png)
 
 
+# -----------------------------
+# CLI parsing helpers
+# -----------------------------
 def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
     """
     Parse repeated --header 'Key: Value' into a dict.
@@ -183,54 +253,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # -----------------------------
+    # http-fuzz
+    # -----------------------------
     http_parser = subparsers.add_parser(
         "http-fuzz",
         help="Run a simple HTTP fuzz / brute-force job",
     )
 
-    # NOTE: url/wordlist optional when using --profile; we enforce in code
+    # url/wordlist optional when using --profile; enforced in code
     http_parser.add_argument(
         "--url",
         required=False,
         default=None,
         help="Target URL. Use {payload} as a placeholder in the query or path.",
     )
-    http_parser.add_argument(
-        "--method",
-        default="GET",
-        help="HTTP method (GET, POST, etc.). Default: GET",
-    )
+    http_parser.add_argument("--method", default="GET", help="HTTP method (GET, POST, etc.). Default: GET")
     http_parser.add_argument(
         "--wordlist",
         required=False,
         default=None,
         help="Path to wordlist file (one payload per line).",
     )
-    http_parser.add_argument(
-        "--concurrency",
-        type=int,
-        default=10,
-        help="Number of concurrent requests. Default: 10",
-    )
-    http_parser.add_argument(
-        "--timeout",
-        type=float,
-        default=10.0,
-        help="Per-request timeout in seconds. Default: 10",
-    )
-    http_parser.add_argument(
-        "--output",
-        type=str,
-        default=None,
-        help="Optional JSONL output path for results.",
-    )
+    http_parser.add_argument("--concurrency", type=int, default=10, help="Number of concurrent requests. Default: 10")
+    http_parser.add_argument("--timeout", type=float, default=10.0, help="Per-request timeout in seconds. Default: 10")
+    http_parser.add_argument("--output", type=str, default=None, help="Optional JSONL output path for results.")
     http_parser.add_argument(
         "--placeholder",
         type=str,
         default="{payload}",
         help="Placeholder string in URL or body. Default: {payload}",
     )
-
     http_parser.add_argument(
         "--body-template",
         type=str,
@@ -242,39 +295,29 @@ def build_parser() -> argparse.ArgumentParser:
             '\'{"user":"admin","pass":"{payload}"}\''
         ),
     )
-
     http_parser.add_argument(
         "--urlencode-payload",
         action="store_true",
         help="URL-encode payload when substituting into the URL placeholder (recommended for query/path fuzzing).",
     )
-
     http_parser.add_argument(
         "--header",
         action="append",
         default=None,
         help=(
             "Optional HTTP header, can be used multiple times. "
-            'Example: --header "Authorization: Bearer TOKEN" '
-            '--header "X-Env: dev"'
+            'Example: --header "Authorization: Bearer TOKEN" --header "X-Env: dev"'
         ),
     )
-
     http_parser.add_argument(
         "--profile",
         type=str,
         default=None,
-        help="Optional profile name to load from profiles.toml "
-        "(e.g. 'delphonix-login-dev').",
+        help="Optional profile name to load from profiles.toml (e.g. 'delphonix-login-dev').",
     )
 
     # Safety controls
-    http_parser.add_argument(
-        "--max-rps",
-        type=float,
-        default=5.0,
-        help="Maximum requests per second (global). Default: 5.0",
-    )
+    http_parser.add_argument("--max-rps", type=float, default=5.0, help="Maximum requests per second (global). Default: 5.0")
     http_parser.add_argument(
         "--stop-on-error-rate",
         type=float,
@@ -287,165 +330,86 @@ def build_parser() -> argparse.ArgumentParser:
         default=50,
         help="Number of most-recent requests used to compute error rate. Default: 50",
     )
-    http_parser.add_argument(
-        "--env",
-        type=str,
-        default="dev",
-        choices=["dev", "stage", "prod"],
-        help="Environment label for this target (dev, stage, prod). Default: dev",
-    )
+    http_parser.add_argument("--env", type=str, default="dev", choices=["dev", "stage", "prod"], help="Environment label (dev, stage, prod). Default: dev")
     http_parser.add_argument(
         "--i-understand-prod",
         action="store_true",
         help="Required when --env prod is used, to acknowledge live-target testing.",
     )
+    http_parser.add_argument("--dry-run", action="store_true", help="Show what would be executed, but do not send any HTTP requests.")
+    http_parser.add_argument("--mode", type=str, default="default", choices=["default", "recon", "auth-pressure"], help="Assessment mode: default | recon | auth-pressure")
     http_parser.add_argument(
-        "--dry-run",
+        "--bundle",
         action="store_true",
-        help="Show what would be executed, but do not send any HTTP requests.",
+        help="Create a <output>.bundle.zip from the manifest + listed artifacts (requires --output).",
     )
 
-    http_parser.add_argument(
-        "--mode",
-        type=str,
-        default="default",
-        choices=["default", "recon", "auth-pressure"],  # keep consistent with http-flow
-        help="Assessment mode: default | recon | auth-pressure",
-    )
-
+    # -----------------------------
+    # http-flow
+    # -----------------------------
     http_flow_parser = subparsers.add_parser(
         "http-flow",
         help="Run a multi-step HTTP flow defined in flows.toml",
     )
-    http_flow_parser.add_argument(
-        "--flows-file",
-        type=str,
-        default="flows.toml",
-        help="Path to flows TOML file (default: flows.toml in current directory).",
-    )
-    http_flow_parser.add_argument(
-        "--flow",
-        type=str,
-        required=False,
-        help="Flow name from flows.toml (e.g. delphonix-login-sequence).",
-    )
-    http_flow_parser.add_argument(
-        "--list",
-        action="store_true",
-        help="List available flows from flows.toml and exit.",
-    )
-    http_flow_parser.add_argument(
-        "--lint",
-        action="store_true",
-        help="Validate flows TOML structure/types and exit (no network). Non-zero on errors.",
-    )
-    http_flow_parser.add_argument(
-        "--timeout",
-        type=float,
-        default=10.0,
-        help="Per-request timeout in seconds. Default: 10",
-    )
-    http_flow_parser.add_argument(
-        "--max-rps",
-        type=float,
-        default=2.0,
-        help="Max requests per second across the flow. Default: 2.0",
-    )
-    http_flow_parser.add_argument(
-        "--env",
-        type=str,
-        default="dev",
-        choices=["dev", "stage", "prod"],
-        help="Environment label for this flow. Default: dev",
-    )
+    http_flow_parser.add_argument("--flows-file", type=str, default="flows.toml", help="Path to flows TOML file (default: flows.toml).")
+    http_flow_parser.add_argument("--flow", type=str, required=False, help="Flow name from flows.toml (e.g. delphonix-login-sequence).")
+    http_flow_parser.add_argument("--list", action="store_true", help="List available flows from flows.toml and exit.")
+    http_flow_parser.add_argument("--lint", action="store_true", help="Validate flows TOML structure/types and exit (no network). Non-zero on errors.")
+    http_flow_parser.add_argument("--timeout", type=float, default=10.0, help="Per-request timeout in seconds. Default: 10")
+    http_flow_parser.add_argument("--max-rps", type=float, default=2.0, help="Max requests per second across the flow. Default: 2.0")
+    http_flow_parser.add_argument("--env", type=str, default="dev", choices=["dev", "stage", "prod"], help="Environment label for this flow. Default: dev")
     http_flow_parser.add_argument(
         "--i-understand-prod",
         action="store_true",
         help="Required when --env prod is used, to acknowledge live-target testing.",
     )
-    http_flow_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show the flow steps without sending any HTTP requests.",
-    )
+    http_flow_parser.add_argument("--dry-run", action="store_true", help="Show the flow steps without sending any HTTP requests.")
     http_flow_parser.add_argument(
         "--output",
         type=str,
         default=None,
-        help=(
-            "Optional output prefix for logs. "
-            "If set, writes <prefix>.jsonl and <prefix>.summary.md"
-        ),
+        help="Optional output prefix for logs. If set, writes <prefix>.jsonl and summaries/reports.",
     )
     http_flow_parser.add_argument(
         "--stop-on-fail",
         action="store_true",
-        help=(
-            "Stop the entire flow as soon as any step fails. "
-            "Per-step `stop_on_fail = true` in flows.toml still applies; "
-            "this flag adds a global fail-fast mode."
-        ),
+        help="Stop the entire flow as soon as any step fails.",
     )
     http_flow_parser.add_argument(
         "--continue-on-fail",
         action="store_true",
-        help=(
-            "Force the flow to continue through all steps even if some fail. "
-            "Overrides per-step `stop_on_fail = true` flags."
-        ),
+        help="Force the flow to continue through all steps even if some fail. Overrides per-step stop flags.",
     )
-    http_flow_parser.add_argument(
-        "--vars-dump",
-        action="store_true",
-        help=(
-            "After the flow finishes, print extracted variables from "
-            "`extract_regex`/`store_as` steps."
-        ),
-    )
-    http_flow_parser.add_argument(
-        "--save-body",
-        action="store_true",
-        help=(
-            "When steps fail, write their response bodies to disk next to "
-            "the JSONL/summary files."
-        ),
-    )
-    http_flow_parser.add_argument(
-        "--mode",
-        type=str,
-        default="default",
-        choices=["default", "recon", "auth-pressure"],  # expand later
-        help="Assessment mode: default | recon | auth-pressure",
-    )
+    http_flow_parser.add_argument("--vars-dump", action="store_true", help="After the flow finishes, print extracted variables.")
+    http_flow_parser.add_argument("--save-body", action="store_true", help="When steps fail, write response bodies to disk.")
+    http_flow_parser.add_argument("--mode", type=str, default="default", choices=["default", "recon", "auth-pressure"], help="Assessment mode: default | recon | auth-pressure")
     http_flow_parser.add_argument(
         "--var",
         action="append",
         default=None,
-        help=(
-            "Set a template variable for this flow, e.g. "
-            "--var username=admin --var password=secret. "
-            "These become available in templates as {username}, {password}, etc."
-        ),
+        help="Set a template variable for this flow, e.g. --var username=admin --var password=secret",
     )
-
-    http_flow_parser.add_argument(
-        "--exit-snapshot",
-        action="store_true",
-        help="Capture a browser screenshot at flow exit (PASS or FAIL)",
-    )
-
+    http_flow_parser.add_argument("--exit-snapshot", action="store_true", help="Capture a browser screenshot at flow exit (PASS or FAIL)")
     http_flow_parser.add_argument("--no-jsonl", action="store_true", help="Do not write <output>.jsonl")
     http_flow_parser.add_argument("--no-summary-md", action="store_true", help="Do not write <output>.summary.md")
     http_flow_parser.add_argument("--no-summary-json", action="store_true", help="Do not write <output>.summary.json")
     http_flow_parser.add_argument("--quiet", action="store_true", help="Suppress 'Wrote:' line (still prints errors)")
+    http_flow_parser.add_argument(
+        "--bundle",
+        action="store_true",
+        help="Create a <output>.bundle.zip from the manifest + listed artifacts (requires --output).",
+    )
 
     return parser
 
 
+# -----------------------------
+# http-fuzz summarization + artifacts
+# -----------------------------
 def summarize_results(results) -> None:
     """
     Print a quick summary grouping by (status_code, content_length)
-    and showing sample payloads. Helps spot outliers fast.
+    and showing sample payloads.
     """
     groups: Dict[Tuple[Optional[int], Optional[int]], List[str]] = defaultdict(list)
 
@@ -458,14 +422,12 @@ def summarize_results(results) -> None:
         return
 
     print("\n[CATE] Response groups (by status_code, content_length):")
-
     sorted_groups = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
 
     for (status_code, content_length), payloads in sorted_groups:
         count = len(payloads)
         status_str = "None" if status_code is None else str(status_code)
         size_str = "None" if content_length is None else str(content_length)
-
         samples = payloads[:5]
         sample_str = ", ".join(samples)
         more = "" if count <= 5 else f" (+{count - 5} more)"
@@ -480,265 +442,10 @@ def summarize_results(results) -> None:
         if len(payloads) <= 3:
             status_str = "None" if status_code is None else str(status_code)
             size_str = "None" if content_length is None else str(content_length)
-            print(
-                f"  * status={status_str}, size={size_str} bytes → "
-                f"{len(payloads)} payload(s): {payloads}"
-            )
-
-
-def write_flow_logs(
-    output_prefix: str,
-    results: List[Dict[str, Any]],
-    env: Optional[str] = None,
-    initial_vars: Optional[Dict[str, Any]] = None,
-    save_body: bool = False,
-    write_jsonl: bool = True,
-    write_summary_md: bool = True,
-    write_summary_json: bool = True,
-    mode: Optional[str] = None,
-) -> List[Path]:
-    """
-    Write flow execution logs:
-
-      - <output_prefix>.jsonl       : one JSON object per step
-      - <output_prefix>.summary.md  : human-readable Markdown summary
-      - <output_prefix>.summary.json: machine-readable summary
-      - <output_prefix>.stepN_<name>.body.txt : (optional) response bodies
-        for failing steps when save_body=True
-    """
-
-    written: List[Path] = []
-
-    sj: Optional[str] = None
-    smd: Optional[str] = None
-    signals: Optional[Dict[str, Any]] = None
-
-    out = Path(output_prefix)
-
-    # If the user passed a filename ending in .jsonl, keep it.
-    # Otherwise treat as prefix and append .jsonl
-    if out.suffix.lower() == ".jsonl":
-        jsonl_path = out
-    else:
-        jsonl_path = Path(f"{output_prefix}.jsonl")
-
-    # For summaries, always hang them off the jsonl base name
-    summary_md_path = jsonl_path.with_suffix(".summary.md")
-    summary_json_path = jsonl_path.with_suffix(".summary.json")
-
-    # Ensure parent directory exists for ALL outputs we might write
-    for p, enabled in [
-        (jsonl_path, write_jsonl),
-        (summary_md_path, write_summary_md),
-        (summary_json_path, write_summary_json),
-    ]:
-        if enabled:
-            p.parent.mkdir(parents=True, exist_ok=True)
-
-    # JSONL: one line per step (unchanged)
-    if write_jsonl:
-        with jsonl_path.open("w", encoding="utf-8") as f:
-            for r in results:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        written.append(jsonl_path)
-
-    # --- Summaries (Markdown + JSON) ---
-    total = len(results)
-    failing = [r for r in results if not r.get("ok")]
-    failures = len(failing)
-    avg_ms = (
-        sum(r.get("elapsed_ms", 0.0) for r in results) / total
-        if total > 0
-        else 0.0
-    )
-
-    final_vars: Dict[str, Any] = {}
-    for r in results:
-        var_name = r.get("extracted_var")
-        var_value = r.get("extracted_value")
-        if var_name is not None and var_value is not None:
-            final_vars[var_name] = var_value
-
-    # Build summary object in-memory ALWAYS (even if we don't write summary.json)
-    summary_obj: Dict[str, Any] = {
-        "steps": total,
-        "failures": failures,
-        "avg_latency_ms": avg_ms,
-        "final_vars": final_vars,
-        "mode": mode or "default",
-    }
-
-    # Add a few concrete failure examples (for signals/verdict)
-    fail_samples: List[Dict[str, Any]] = []
-    for r in results:
-        if r.get("ok"):
-            continue
-
-        expected = None
-        err = r.get("error")
-        if isinstance(err, str):
-            m = re.search(r"expected status(?: in)? (\[[^\]]+\])", err)
-            if m:
-                expected = m.group(1)
-
-        fail_samples.append(
-            {
-                "step": r.get("step"),
-                "status": r.get("status_code"),
-                "expected": expected,
-                "error": err,
-            }
-        )
-
-        if len(fail_samples) >= 3:
-            break
-    summary_obj["fail_samples"] = fail_samples
-
-    # Write summary.json (optional, best-effort)
-    if write_summary_json:
-        try:
-            summary_json_path.write_text(
-                json.dumps(summary_obj, indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
-            written.append(summary_json_path)
-        except Exception:
-            pass
-
-    # -----------------------------
-    # Invariant / contract check: summary (best-effort)
-    # -----------------------------
-    try:
-        kind, warnings = validate_summary(summary_obj)
-        summary_obj["kind"] = kind  # normalize kind explicitly
-        if warnings:
-            print(
-                _color(
-                    f"[CATE] Contract warnings (summary): {', '.join(warnings)}",
-                    _FG_YELLOW,
-                )
-            )
-    except ContractError as ce:
-        print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
-
-    # -----------------------------
-    # Compute + write signals (best-effort) — NOT gated on summary.json
-    # -----------------------------
-    try:
-        from cate.contracts import build_and_validate_signals
-
-        signals = build_and_validate_signals(summary_obj)
-        signals["mode"] = summary_obj.get("mode", "default")
-        signals = finalize_signals(signals)
-
-        # Invariant / contract check: signals (best-effort)
-        try:
-            warnings = validate_signals(signals)
-            if warnings:
-                print(
-                    _color(
-                        f"[CATE] Contract warnings (signals): {', '.join(warnings)}",
-                        _FG_YELLOW,
-                    )
-                )
-        except ContractError as ce:
-            print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
-
-        sj = write_signals_json(signals, str(Path(output_prefix)))
-        smd = write_signals_md(signals, str(Path(output_prefix)))
-
-        print(_color(f"[CATE] Signals written to {sj}", _FG_GREEN))
-        print(_color(f"[CATE] Signals written to {smd}", _FG_GREEN))
-
-        _print_signal_verdict(signals)
-
-    except Exception as exc:
-        print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
-
-    # Write summary.md (optional) — NOT gated on summary.json
-    if write_summary_md:
-        summary_md_path.write_text(
-            render_flow_summary_md(results, env=env, initial_vars=initial_vars),
-            encoding="utf-8",
-        )
-        written.append(summary_md_path)
-
-        # -----------------------------
-        # Write report (flow) (best-effort)
-        # -----------------------------
-        try:
-            if sj and smd:
-                report_path = write_report_md(
-                    output_prefix=str(Path(output_prefix)),
-                    env=env,
-                    kind=(signals or {}).get("kind", "http-flow"),
-                    summary_json_path=str(summary_json_path) if write_summary_json else None,
-                    summary_md_path=str(summary_md_path) if write_summary_md else None,
-                    signals_json_path=sj,
-                    signals_md_path=smd,
-                )
-                print(_color(f"[CATE] Report written to {report_path}", _FG_GREEN))
-                written.append(Path(report_path))
-
-                # HTML report (best-effort)
-                try:
-                    from .reporting import write_report_html
-
-                    html_report_path = write_report_html(
-                        output_prefix=str(Path(output_prefix)),
-                        env=env,
-                        kind=(signals or {}).get("kind", "http-flow"),
-                        summary_json_path=str(summary_json_path) if write_summary_json else None,
-                        summary_md_path=str(summary_md_path) if write_summary_md else None,
-                        signals_json_path=sj,
-                        signals_md_path=smd,
-                        jsonl_path=str(jsonl_path) if write_jsonl else None,
-                    )
-                    print(_color(f"[CATE] HTML report written to {html_report_path}", _FG_GREEN))
-                    written.append(Path(html_report_path))
-                except Exception as exc:
-                    print(_color(f"[CATE] Failed to write HTML report: {exc}", _FG_YELLOW))
-
-        except Exception as exc:
-            print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
-
-    # Dump response bodies for failing steps
-    if save_body:
-        for idx, r in enumerate(results, 1):
-            if r.get("ok"):
-                continue
-
-            body = r.get("body")
-            if not body:
-                continue
-
-            step_name = str(r.get("step", f"step{idx}"))
-            safe_step = re.sub(r"[^A-Za-z0-9_-]+", "_", step_name)
-
-            body_path = Path(f"{output_prefix}.step{idx}_{safe_step}.body.txt")
-            html_capture = Path(f"{output_prefix}.step{idx}_{safe_step}.body.html")
-
-            try:
-                body_path.parent.mkdir(parents=True, exist_ok=True)
-                body_text = body if isinstance(body, str) else str(body)
-                body_path.write_text(body_text, encoding="utf-8")
-                written.append(body_path)
-
-                lower = body_text.lower()
-                if "<html" in lower or "<!doctype html" in lower:
-                    html_capture.write_text(body_text, encoding="utf-8")
-                    written.append(html_capture)
-            except Exception:
-                pass
-
-    return written
+            print(f"  * status={status_str}, size={size_str} bytes → {len(payloads)} payload(s): {payloads}")
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
-    """
-    Simple percentile helper: pct in [0, 100].
-    Returns None if list is empty.
-    """
     if not values:
         return None
     values_sorted = sorted(values)
@@ -753,9 +460,6 @@ def _percentile(values: List[float], pct: float) -> Optional[float]:
 
 
 def build_run_summary(results, config: JobConfig) -> Dict[str, Any]:
-    """
-    Build a machine-readable summary dict for a given run.
-    """
     total = len(results)
     error_count = 0
     latencies: List[float] = []
@@ -773,7 +477,6 @@ def build_run_summary(results, config: JobConfig) -> Dict[str, Any]:
                 ts = getattr(r, "timestamp", None)
                 if hasattr(ts, "isoformat"):
                     ts = ts.isoformat()
-
                 error_examples.append(
                     {
                         "payload": r.payload,
@@ -807,10 +510,7 @@ def build_run_summary(results, config: JobConfig) -> Dict[str, Any]:
 
     return {
         "generated_at": now,
-        "target": {
-            "method": getattr(target, "method", None),
-            "url": getattr(target, "url", None),
-        },
+        "target": {"method": getattr(target, "method", None), "url": getattr(target, "url", None)},
         "env": None,
         "wordlist": str(getattr(config, "wordlist_path", "")),
         "concurrency": config.concurrency,
@@ -827,9 +527,6 @@ def build_run_summary(results, config: JobConfig) -> Dict[str, Any]:
 
 
 def render_markdown_summary(summary: Dict[str, Any]) -> str:
-    """
-    Turn the JSON summary dict into a human-readable Markdown report.
-    """
     status_codes = summary.get("status_counts", {}) or {}
     error_count = int(summary.get("error_count", 0) or 0)
     error_rate = float(summary.get("error_rate", 0.0) or 0.0)
@@ -845,20 +542,14 @@ def render_markdown_summary(summary: Dict[str, Any]) -> str:
     passed = (error_count == 0) and (not has_server_errors) and (error_rate == 0.0)
 
     lines: List[str] = []
-
-    if passed:
-        lines.append("# ✅ CATE Run Passed")
-    else:
-        lines.append("# ❌ CATE Run Failed")
+    lines.append("# ✅ CATE Run Passed" if passed else "# ❌ CATE Run Failed")
     lines.append("")
-
     lines.append("## Status Codes\n")
     lines.append("| Status | Count |")
     lines.append("|--------|-------|")
     for code, count in sorted(status_codes.items(), key=lambda kv: kv[0]):
         lines.append(f"| {code} | {count} |")
     lines.append("")
-
     latency = summary.get("latency", {}) or {}
     lines.append("## Latency (ms)\n")
     lines.append("| Metric | Value |")
@@ -867,11 +558,9 @@ def render_markdown_summary(summary: Dict[str, Any]) -> str:
         if key in latency:
             lines.append(f"| {key} | {latency[key]} |")
     lines.append("")
-
     lines.append("---")
     lines.append("_Report generated by **CATE – Calypso Automated Testing Engine**_")
     lines.append("")
-
     return "\n".join(lines)
 
 
@@ -886,6 +575,7 @@ def write_run_summaries(
     Given the main JSONL output path, write:
       - <name>.summary.json
       - <name>.summary.md
+    Then compute signals + reports, then write evidence manifest.
     """
     summary = build_run_summary(results, config)
     if env:
@@ -897,10 +587,7 @@ def write_run_summaries(
     md_path = output_path.with_suffix(".summary.md")
 
     try:
-        json_path.write_text(
-            json.dumps(summary, indent=2, sort_keys=True, default=str),
-            encoding="utf-8",
-        )
+        json_path.write_text(json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8")
     except Exception as exc:
         print(_color(f"[CATE] Failed to write JSON summary: {exc}", _FG_YELLOW))
 
@@ -910,7 +597,7 @@ def write_run_summaries(
     except Exception as exc:
         print(_color(f"[CATE] Failed to write Markdown summary: {exc}", _FG_YELLOW))
 
-    # --- Signals (derived from summary) ---
+    # Signals + reports + manifest (best-effort)
     try:
         top_trigger = None
         ex = summary.get("error_examples") or []
@@ -977,7 +664,7 @@ def write_run_summaries(
         print(_color(f"[CATE] Signals written to {signals_md_path}", _FG_GREEN))
         _print_signal_verdict(signals)
 
-        # ✅ Evidence manifest (fuzz) — after all artifacts are present
+        # Evidence manifest (fuzz) — after all artifacts are present
         try:
             manifest_path = write_evidence_manifest(
                 output_prefix=str(output_path),
@@ -1003,6 +690,9 @@ def write_run_summaries(
         print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
 
 
+# -----------------------------
+# Profiles → effective config
+# -----------------------------
 def build_effective_config(args) -> Dict[str, Any]:
     """
     Combine profile (if any) + CLI flags into a single config dict.
@@ -1037,7 +727,6 @@ def build_effective_config(args) -> Dict[str, Any]:
         profile_headers = profile_data.get("headers", {})
         if not isinstance(profile_headers, dict):
             profile_headers = {}
-
         headers = {**profile_headers, **headers_from_cli}
 
         if not url:
@@ -1046,7 +735,6 @@ def build_effective_config(args) -> Dict[str, Any]:
         if not wordlist:
             print("[CATE] Profile is missing 'wordlist' and none supplied via CLI.")
             raise SystemExit(1)
-
     else:
         if not args.url:
             print("[CATE] --url is required if no --profile is specified.")
@@ -1086,6 +774,9 @@ def build_effective_config(args) -> Dict[str, Any]:
     }
 
 
+# -----------------------------
+# http-fuzz runner
+# -----------------------------
 def run_http_fuzz(
     url: str,
     method: str,
@@ -1104,7 +795,9 @@ def run_http_fuzz(
     urlencode_payload: bool,
     error_window: int,
     mode: str,
+    bundle: bool,
 ) -> int:
+    # Safety: block real prod runs without explicit flag
     if env == "prod" and not i_understand_prod and not dry_run:
         print(
             _color(
@@ -1114,31 +807,26 @@ def run_http_fuzz(
         )
         return 1
 
+    # DRY RUN
     if dry_run:
         print(_color("[CATE] DRY RUN — no HTTP requests will be sent.", _FG_MAGENTA))
         print(_color(f"[CATE] Environment: {env}", _FG_CYAN))
         print(_color(f"[CATE] Target: {method.upper()} {url}", _FG_CYAN))
         print(_color(f"[CATE] Wordlist: {wordlist}", _FG_CYAN))
-        print(
-            _color(
-                f"[CATE] Concurrency={concurrency}, "
-                f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}",
-                _FG_CYAN,
-            )
-        )
+        print(_color(f"[CATE] Concurrency={concurrency}, max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}", _FG_CYAN))
         if headers:
             print(_color(f"[CATE] Headers: {headers}", _FG_CYAN))
         if body_template:
             print(_color(f"[CATE] Body template: {body_template}", _FG_CYAN))
         print(_color(f"[CATE] Placeholder: {placeholder}", _FG_CYAN))
+        print(_color(f"[CATE] Mode: {mode}", _FG_CYAN))
         return 0
 
     print(_color(f"[CATE] Environment: {env}", _FG_CYAN))
     print(
         _color(
-            f"[CATE] Config: method={method}, concurrency={concurrency}, "
-            f"max_rps={max_rps}, stop_on_error_rate={stop_on_error_rate}, "
-            f"urlencode_payload={urlencode_payload}",
+            f"[CATE] Config: method={method}, concurrency={concurrency}, max_rps={max_rps}, "
+            f"stop_on_error_rate={stop_on_error_rate}, urlencode_payload={urlencode_payload}",
             _FG_CYAN,
         )
     )
@@ -1173,11 +861,7 @@ def run_http_fuzz(
             write_results_jsonl(output_path, results)
 
         total = len(results)
-        errors = sum(
-            1
-            for r in results
-            if r.error or (r.status_code is not None and r.status_code >= 500)
-        )
+        errors = sum(1 for r in results if r.error or (r.status_code is not None and r.status_code >= 500))
         if errors:
             print(_color(f"[CATE] Completed {total} payloads ({errors} errors).", _FG_YELLOW))
         else:
@@ -1187,12 +871,24 @@ def run_http_fuzz(
             print(_color(f"[CATE] Results written to {output_path}", _FG_GREEN))
             write_run_summaries(output_path, results, config, env=env, mode=mode)
 
+            # Bundle: after manifest exists (manifest is written by write_run_summaries)
+            if bundle:
+                try:
+                    manifest_path = output_path.with_suffix(".manifest.json")
+                    bundle_path = bundle_from_manifest(manifest_path)
+                    print(_color(f"[CATE] Bundle written to {bundle_path}", _FG_GREEN))
+                except Exception as exc:
+                    print(_color(f"[CATE] Failed to bundle artifacts: {exc}", _FG_YELLOW))
+
         summarize_results(results)
         return 0
 
     return asyncio.run(_run())
 
 
+# -----------------------------
+# Flow lint
+# -----------------------------
 def lint_flows(flows_path: Optional[Path]) -> Tuple[Dict[str, Any], List[str], List[str]]:
     warnings: List[str] = []
     errors: List[str] = []
@@ -1222,10 +918,215 @@ def lint_flows(flows_path: Optional[Path]) -> Tuple[Dict[str, Any], List[str], L
     return flows, warnings, errors
 
 
+# -----------------------------
+# Flow logs (jsonl/summary/signals/reports)
+# -----------------------------
+def write_flow_logs(
+    output_prefix: str,
+    results: List[Dict[str, Any]],
+    env: Optional[str] = None,
+    initial_vars: Optional[Dict[str, Any]] = None,
+    save_body: bool = False,
+    write_jsonl: bool = True,
+    write_summary_md: bool = True,
+    write_summary_json: bool = True,
+    mode: Optional[str] = None,
+) -> List[Path]:
+    """
+    Write flow execution logs:
+
+      - <output_prefix>.jsonl
+      - <output_prefix>.summary.md
+      - <output_prefix>.summary.json
+      - signals + reports (via reporting module)
+      - failing step bodies (optional)
+    """
+    written: List[Path] = []
+    sj: Optional[str] = None
+    smd: Optional[str] = None
+    signals: Optional[Dict[str, Any]] = None
+
+    out = Path(output_prefix)
+    if out.suffix.lower() == ".jsonl":
+        jsonl_path = out
+    else:
+        jsonl_path = Path(f"{output_prefix}.jsonl")
+
+    summary_md_path = jsonl_path.with_suffix(".summary.md")
+    summary_json_path = jsonl_path.with_suffix(".summary.json")
+
+    for p, enabled in [
+        (jsonl_path, write_jsonl),
+        (summary_md_path, write_summary_md),
+        (summary_json_path, write_summary_json),
+    ]:
+        if enabled:
+            p.parent.mkdir(parents=True, exist_ok=True)
+
+    # JSONL
+    if write_jsonl:
+        with jsonl_path.open("w", encoding="utf-8") as f:
+            for r in results:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        written.append(jsonl_path)
+
+    total = len(results)
+    failing = [r for r in results if not r.get("ok")]
+    failures = len(failing)
+    avg_ms = (sum(r.get("elapsed_ms", 0.0) for r in results) / total) if total > 0 else 0.0
+
+    final_vars: Dict[str, Any] = {}
+    for r in results:
+        var_name = r.get("extracted_var")
+        var_value = r.get("extracted_value")
+        if var_name is not None and var_value is not None:
+            final_vars[var_name] = var_value
+
+    summary_obj: Dict[str, Any] = {
+        "steps": total,
+        "failures": failures,
+        "avg_latency_ms": avg_ms,
+        "final_vars": final_vars,
+        "mode": mode or "default",
+    }
+
+    fail_samples: List[Dict[str, Any]] = []
+    for r in results:
+        if r.get("ok"):
+            continue
+        expected = None
+        err = r.get("error")
+        if isinstance(err, str):
+            m = re.search(r"expected status(?: in)? (\[[^\]]+\])", err)
+            if m:
+                expected = m.group(1)
+
+        fail_samples.append({"step": r.get("step"), "status": r.get("status_code"), "expected": expected, "error": err})
+        if len(fail_samples) >= 3:
+            break
+    summary_obj["fail_samples"] = fail_samples
+
+    # summary.json
+    if write_summary_json:
+        try:
+            summary_json_path.write_text(json.dumps(summary_obj, indent=2, sort_keys=True), encoding="utf-8")
+            written.append(summary_json_path)
+        except Exception:
+            pass
+
+    # contract check summary
+    try:
+        kind, warnings = validate_summary(summary_obj)
+        summary_obj["kind"] = kind
+        if warnings:
+            print(_color(f"[CATE] Contract warnings (summary): {', '.join(warnings)}", _FG_YELLOW))
+    except ContractError as ce:
+        print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
+
+    # signals
+    try:
+        from cate.contracts import build_and_validate_signals
+
+        signals = build_and_validate_signals(summary_obj)
+        signals["mode"] = summary_obj.get("mode", "default")
+        signals = finalize_signals(signals)
+
+        try:
+            warnings = validate_signals(signals)
+            if warnings:
+                print(_color(f"[CATE] Contract warnings (signals): {', '.join(warnings)}", _FG_YELLOW))
+        except ContractError as ce:
+            print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
+
+        sj = write_signals_json(signals, str(Path(output_prefix)))
+        smd = write_signals_md(signals, str(Path(output_prefix)))
+        print(_color(f"[CATE] Signals written to {sj}", _FG_GREEN))
+        print(_color(f"[CATE] Signals written to {smd}", _FG_GREEN))
+        _print_signal_verdict(signals)
+
+    except Exception as exc:
+        print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
+
+    # summary.md + reports
+    if write_summary_md:
+        summary_md_path.write_text(render_flow_summary_md(results, env=env, initial_vars=initial_vars), encoding="utf-8")
+        written.append(summary_md_path)
+
+        # report + html report best-effort
+        try:
+            if sj and smd:
+                report_path = write_report_md(
+                    output_prefix=str(Path(output_prefix)),
+                    env=env,
+                    kind=(signals or {}).get("kind", "http-flow"),
+                    summary_json_path=str(summary_json_path) if write_summary_json else None,
+                    summary_md_path=str(summary_md_path) if write_summary_md else None,
+                    signals_json_path=sj,
+                    signals_md_path=smd,
+                )
+                print(_color(f"[CATE] Report written to {report_path}", _FG_GREEN))
+                written.append(Path(report_path))
+
+                try:
+                    from .reporting import write_report_html
+
+                    html_report_path = write_report_html(
+                        output_prefix=str(Path(output_prefix)),
+                        env=env,
+                        kind=(signals or {}).get("kind", "http-flow"),
+                        summary_json_path=str(summary_json_path) if write_summary_json else None,
+                        summary_md_path=str(summary_md_path) if write_summary_md else None,
+                        signals_json_path=sj,
+                        signals_md_path=smd,
+                        jsonl_path=str(jsonl_path) if write_jsonl else None,
+                    )
+                    print(_color(f"[CATE] HTML report written to {html_report_path}", _FG_GREEN))
+                    written.append(Path(html_report_path))
+                except Exception as exc:
+                    print(_color(f"[CATE] Failed to write HTML report: {exc}", _FG_YELLOW))
+
+        except Exception as exc:
+            print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
+
+    # failing bodies
+    if save_body:
+        for idx, r in enumerate(results, 1):
+            if r.get("ok"):
+                continue
+            body = r.get("body")
+            if not body:
+                continue
+
+            step_name = str(r.get("step", f"step{idx}"))
+            safe_step = re.sub(r"[^A-Za-z0-9_-]+", "_", step_name)
+
+            body_path = Path(f"{output_prefix}.step{idx}_{safe_step}.body.txt")
+            html_capture = Path(f"{output_prefix}.step{idx}_{safe_step}.body.html")
+
+            try:
+                body_path.parent.mkdir(parents=True, exist_ok=True)
+                body_text = body if isinstance(body, str) else str(body)
+                body_path.write_text(body_text, encoding="utf-8")
+                written.append(body_path)
+
+                lower = body_text.lower()
+                if "<html" in lower or "<!doctype html" in lower:
+                    html_capture.write_text(body_text, encoding="utf-8")
+                    written.append(html_capture)
+            except Exception:
+                pass
+
+    return written
+
+
+# -----------------------------
+# main
+# -----------------------------
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # http-fuzz
     if args.command == "http-fuzz":
         cfg = build_effective_config(args)
         return run_http_fuzz(
@@ -1246,9 +1147,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             urlencode_payload=cfg["urlencode_payload"],
             error_window=cfg["error_window"],
             mode=args.mode,
+            bundle=bool(getattr(args, "bundle", False)),
         )
 
-    elif args.command == "http-flow":
+    # http-flow
+    if args.command == "http-flow":
         flows_path = Path(args.flows_file) if getattr(args, "flows_file", None) else None
 
         if args.stop_on_fail and args.continue_on_fail:
@@ -1257,7 +1160,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         if getattr(args, "lint", False):
             try:
-                flows, warnings, errors = lint_flows(flows_path)
+                _flows, warnings, errors = lint_flows(flows_path)
             except FileNotFoundError as e:
                 print(_color(f"[CATE] {e}", _FG_RED))
                 return 1
@@ -1291,10 +1194,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(_color("[CATE] Available flows:", _FG_CYAN))
             for name, flow in flows.items():
                 desc = flow.description or ""
-                if desc:
-                    print(f"  - {name}: {desc}")
-                else:
-                    print(f"  - {name}")
+                print(f"  - {name}: {desc}" if desc else f"  - {name}")
             return 0
 
         if not args.flow:
@@ -1316,12 +1216,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         print(_color("[CATE] Steps:", _FG_CYAN))
         for idx, step in enumerate(flow.steps, 1):
-            line = (
+            print(
                 f"  {idx}. {step.name} -> {step.method} {step.url} "
-                f"(capture_cookies={step.capture_cookies}, "
-                f"expect_status={step.expect_status})"
+                f"(capture_cookies={step.capture_cookies}, expect_status={step.expect_status})"
             )
-            print(line)
 
         initial_vars: Dict[str, Any] = {}
         if getattr(args, "var", None):
@@ -1329,26 +1227,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             if initial_vars:
                 print(_color(f"[CATE] Seeded flow vars: {initial_vars}", _FG_CYAN))
 
+        # DRY RUN: show interpolated requests
         if args.dry_run:
             print(
                 _color(
-                    f"[CATE] DRY RUN — not executing flow (v0.3.0 stateful HTTP run) "
-                    f"in env={args.env} (timeout={args.timeout}s, max_rps={args.max_rps})",
+                    f"[CATE] DRY RUN — not executing flow in env={args.env} (timeout={args.timeout}s, max_rps={args.max_rps})",
                     _FG_MAGENTA,
                 )
             )
-
             vars_map: Dict[str, Any] = dict(initial_vars)
-
             print(_color("[CATE] DRY RUN request preview:", _FG_CYAN))
             for idx, step in enumerate(flow.steps, 1):
-                url_template = step.url
-                body_template = step.body_template
-                headers_template = step.headers or {}
-
-                url_preview = _apply_template_functions(url_template, vars_map)
-                body_preview = _apply_template_functions(body_template, vars_map) if body_template is not None else None
-                headers_preview = {k: _apply_template_functions(v, vars_map) for k, v in headers_template.items()}
+                url_preview = _apply_template_functions(step.url, vars_map)
+                body_preview = _apply_template_functions(step.body_template, vars_map) if step.body_template is not None else None
+                headers_preview = {k: _apply_template_functions(v, vars_map) for k, v in (step.headers or {}).items()}
 
                 print(f"  Step {idx}: {step.name}")
                 print(f"    {step.method} {url_preview}")
@@ -1356,34 +1248,22 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"    Body: {body_preview}")
                 if headers_preview:
                     print(f"    Headers: {headers_preview}")
-
             return 0
 
+        # Safety: block prod unless explicitly acknowledged
         if args.env == "prod" and not args.i_understand_prod:
-            print(
-                _color(
-                    "[CATE] Refusing to run flow against env=prod without --i-understand-prod flag. Aborting.",
-                    _FG_RED,
-                )
-            )
+            print(_color("[CATE] Refusing to run flow against env=prod without --i-understand-prod flag. Aborting.", _FG_RED))
             return 1
 
         print(
             _color(
-                f"[CATE] Executing flow (v0.3.0 stateful HTTP run) in env={args.env} "
-                f"(timeout={args.timeout}s, max_rps={args.max_rps})…",
+                f"[CATE] Executing flow in env={args.env} (timeout={args.timeout}s, max_rps={args.max_rps})…",
                 _FG_CYAN,
             )
         )
 
         stop_on_first_failure = bool(args.stop_on_fail)
         ignore_step_stop_flags = bool(args.continue_on_fail)
-
-        initial_vars = {}
-        if getattr(args, "var", None):
-            initial_vars = parse_vars(args.var)
-            if initial_vars:
-                print(_color(f"[CATE] Seeded flow vars: {initial_vars}", _FG_CYAN))
 
         results = run_flow(
             flow=flow,
@@ -1401,10 +1281,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             status_label = "OK" if r["ok"] else "FAIL"
             color = _FG_GREEN if r["ok"] else _FG_RED
             status = r["status_code"] if r["status_code"] is not None else "ERR"
-            line = (
-                f"{r['step']}: {r['method']} {r['url']} → "
-                f"status={status}, {r['elapsed_ms']:.1f} ms, {r['bytes']} bytes"
-            )
+            line = f"{r['step']}: {r['method']} {r['url']} → status={status}, {r['elapsed_ms']:.1f} ms, {r['bytes']} bytes"
             if r["error"]:
                 line += f" — {r['error']}"
             print(_color(f"[{status_label}] {line}", color))
@@ -1414,11 +1291,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.vars_dump:
             vars_map: Dict[str, Any] = {}
             for r in results:
-                var_name = r.get("extracted_var")
-                var_value = r.get("extracted_value")
-                if var_name is not None and var_value is not None:
-                    vars_map[var_name] = var_value
-
+                vn = r.get("extracted_var")
+                vv = r.get("extracted_value")
+                if vn is not None and vv is not None:
+                    vars_map[vn] = vv
             if not vars_map:
                 print(_color("[CATE] No extracted variables to dump.", _FG_YELLOW))
             else:
@@ -1426,7 +1302,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 for k, v in vars_map.items():
                     print(f"  - {k} = {v!r}")
 
-        # write outputs first
+        # write logs/summaries/signals/reports
         if args.output:
             written_paths = write_flow_logs(
                 output_prefix=args.output,
@@ -1442,12 +1318,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             if not getattr(args, "quiet", False):
                 if written_paths:
-                    joined = ", ".join(str(p) for p in written_paths)
-                    print(_color(f"[CATE] Wrote: {joined}", _FG_CYAN))
+                    print(_color(f"[CATE] Wrote: {', '.join(str(p) for p in written_paths)}", _FG_CYAN))
                 else:
                     print(_color("[CATE] No output files written (all outputs disabled).", _FG_YELLOW))
 
-        # exit snapshot
+        # exit snapshot (optional)
         if args.exit_snapshot and args.output:
             exit_status = "fail" if failures else "pass"
 
@@ -1463,18 +1338,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             if exit_url:
                 try:
-                    png_path = capture_exit_snapshot(
-                        url=exit_url,
-                        output_prefix=args.output,
-                        status=exit_status,
-                    )
+                    png_path = capture_exit_snapshot(exit_url, args.output, exit_status)
                     print(_color(f"[CATE] Exit snapshot written to {png_path}", _FG_GREEN))
                 except Exception as exc:
                     print(_color(f"[CATE] Exit snapshot failed: {exc}", _FG_YELLOW))
             else:
                 print(_color("[CATE] Exit snapshot skipped: no exit URL found.", _FG_YELLOW))
 
-        # ✅ Evidence manifest (flow) — after logs + optional snapshot
+        # evidence manifest (flow) — after logs + optional snapshot
         if args.output:
             try:
                 manifest_path = write_evidence_manifest(
@@ -1494,6 +1365,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(_color(f"[CATE] Evidence manifest written to {manifest_path}", _FG_GREEN))
             except Exception as exc:
                 print(_color(f"[CATE] Failed to write evidence manifest: {exc}", _FG_YELLOW))
+
+        # bundle (flow) — after manifest exists
+        if args.output and getattr(args, "bundle", False):
+            try:
+                manifest_path = Path(f"{args.output}.manifest.json")
+                bundle_path = bundle_from_manifest(manifest_path)
+                print(_color(f"[CATE] Bundle written to {bundle_path}", _FG_GREEN))
+            except Exception as exc:
+                print(_color(f"[CATE] Failed to bundle artifacts: {exc}", _FG_YELLOW))
 
         if failures:
             print(_color(f"[CATE] Flow completed with {failures} failing step(s).", _FG_RED))
