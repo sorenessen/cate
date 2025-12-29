@@ -21,7 +21,10 @@ jobs:
           python -m pip install -e .
 
       - name: Run verify smoke test
+        env:
+          VERIFY_NO_SNAPSHOT: "1"
         run: ./scripts/verify.sh
+
 
       - name: Upload verify artifacts
         if: always()
