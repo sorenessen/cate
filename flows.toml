@@ -62,14 +62,18 @@ steps = ["login", "about"]
 [flows.delphonix-login-cli-vars.login]
 method = "POST"
 url = "https://delphonix.com/login.php"
-body_template = "user={username}&pass={password}"
+headers = { Content-Type = "application/x-www-form-urlencoded" }
+body_template = "username={username}&password={password}"
 capture_cookies = true
 expect_status = 200
+body_must_not_contain = "Login or Sign Up"
+
 
 [flows.delphonix-login-cli-vars.about]
 method = "GET"
-url = "https://delphonix.com/about.php"  # or whatever your “after login” page really is
-capture_cookies = false
-expect_status = 302 #Silencing failure until we get to successful login step, then change to "200"
+url = "https://delphonix.com/about.php"
+expect_status = 200
+body_must_not_contain = "Login or Sign Up"
+
 
 
