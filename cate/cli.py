@@ -5,21 +5,33 @@ import asyncio
 import json
 import re
 from collections import defaultdict
-from pathlib import Path
-from typing import Optional, Tuple, Dict, List, Any
-from statistics import mean
 from datetime import datetime, timezone
+from pathlib import Path
+from statistics import mean
+from typing import Any, Dict, List, Optional, Tuple
 import sys
 
 from cate import __version__
+from .contracts import ContractError, validate_signals, validate_summary
 from .engine import run_job
-from .signals import compute_signals_from_summary, finalize_signals
-from .logging_utils import write_results_jsonl, render_flow_summary_md, write_signals_json, write_signals_md
+from .flows import (
+    FlowNotFound,
+    _apply_template_functions,
+    load_flow,
+    load_flows,
+    run_flow,
+)
+from .logging_utils import (
+    render_flow_summary_md,
+    write_evidence_manifest,
+    write_results_jsonl,
+    write_signals_json,
+    write_signals_md,
+)
 from .models import JobConfig, Target
-from .profiles import load_profile, ProfileNotFound
-from .flows import load_flow, load_flows, run_flow, FlowNotFound, _apply_template_functions
-from .contracts import validate_summary, validate_signals, ContractError
+from .profiles import ProfileNotFound, load_profile
 from .reporting import write_report_md
+from .signals import finalize_signals
 
 
 # Simple ANSI color helpers
@@ -80,6 +92,7 @@ def _print_signal_verdict(signals: dict) -> None:
         )
     )
 
+
 def capture_exit_snapshot(url: str, output_prefix: str, status: str) -> str:
     """
     Best-effort browser screenshot using Playwright (if available).
@@ -92,8 +105,6 @@ def capture_exit_snapshot(url: str, output_prefix: str, status: str) -> str:
       pip install playwright
       playwright install chromium
     """
-    from pathlib import Path
-
     # Lazy import so CATE still runs without playwright installed
     try:
         from playwright.sync_api import sync_playwright  # type: ignore
@@ -302,7 +313,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Assessment mode: default | recon | auth-pressure",
     )
 
-
     http_flow_parser = subparsers.add_parser(
         "http-flow",
         help="Run a multi-step HTTP flow defined in flows.toml",
@@ -421,9 +431,8 @@ def build_parser() -> argparse.ArgumentParser:
     http_flow_parser.add_argument(
         "--exit-snapshot",
         action="store_true",
-        help="Capture a browser screenshot at flow exit (PASS or FAIL)"
+        help="Capture a browser screenshot at flow exit (PASS or FAIL)",
     )
-
 
     http_flow_parser.add_argument("--no-jsonl", action="store_true", help="Do not write <output>.jsonl")
     http_flow_parser.add_argument("--no-summary-md", action="store_true", help="Do not write <output>.summary.md")
@@ -622,7 +631,6 @@ def write_flow_logs(
         signals["mode"] = summary_obj.get("mode", "default")
         signals = finalize_signals(signals)
 
-
         # Invariant / contract check: signals (best-effort)
         try:
             warnings = validate_signals(signals)
@@ -675,6 +683,7 @@ def write_flow_logs(
                 # HTML report (best-effort)
                 try:
                     from .reporting import write_report_html
+
                     html_report_path = write_report_html(
                         output_prefix=str(Path(output_prefix)),
                         env=env,
@@ -693,9 +702,7 @@ def write_flow_logs(
         except Exception as exc:
             print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
 
-
-
-    # 8. Dump response bodies for failing steps
+    # Dump response bodies for failing steps
     if save_body:
         for idx, r in enumerate(results, 1):
             if r.get("ok"):
@@ -712,22 +719,16 @@ def write_flow_logs(
             html_capture = Path(f"{output_prefix}.step{idx}_{safe_step}.body.html")
 
             try:
-                # Ensure directory exists for body dumps
                 body_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Always write plain text body for grepping / diffing
                 body_text = body if isinstance(body, str) else str(body)
                 body_path.write_text(body_text, encoding="utf-8")
                 written.append(body_path)
 
-                # Best-effort HTML detection – only write .html if it looks like HTML
                 lower = body_text.lower()
                 if "<html" in lower or "<!doctype html" in lower:
                     html_capture.write_text(body_text, encoding="utf-8")
                     written.append(html_capture)
-
             except Exception:
-                # best-effort; don't kill the run if body write fails
                 pass
 
     return written
@@ -833,9 +834,6 @@ def render_markdown_summary(summary: Dict[str, Any]) -> str:
     error_count = int(summary.get("error_count", 0) or 0)
     error_rate = float(summary.get("error_rate", 0.0) or 0.0)
 
-    # Treat as failure if:
-    #   - any errors were recorded, OR
-    #   - any status code >= 500 shows up.
     has_server_errors = any(
         (code not in (None, "None"))
         and isinstance(code, str)
@@ -848,14 +846,12 @@ def render_markdown_summary(summary: Dict[str, Any]) -> str:
 
     lines: List[str] = []
 
-    # Header
     if passed:
         lines.append("# ✅ CATE Run Passed")
     else:
         lines.append("# ❌ CATE Run Failed")
     lines.append("")
 
-    # Status Codes
     lines.append("## Status Codes\n")
     lines.append("| Status | Count |")
     lines.append("|--------|-------|")
@@ -863,7 +859,6 @@ def render_markdown_summary(summary: Dict[str, Any]) -> str:
         lines.append(f"| {code} | {count} |")
     lines.append("")
 
-    # Latency
     latency = summary.get("latency", {}) or {}
     lines.append("## Latency (ms)\n")
     lines.append("| Metric | Value |")
@@ -902,16 +897,13 @@ def write_run_summaries(
     md_path = output_path.with_suffix(".summary.md")
 
     try:
-        import json
-
         json_path.write_text(
             json.dumps(summary, indent=2, sort_keys=True, default=str),
             encoding="utf-8",
         )
-    except Exception as exc:  # best-effort; don't kill the run
+    except Exception as exc:
         print(_color(f"[CATE] Failed to write JSON summary: {exc}", _FG_YELLOW))
 
-    # Write summary.md
     try:
         md_text = render_markdown_summary(summary)
         md_path.write_text(md_text, encoding="utf-8")
@@ -920,52 +912,36 @@ def write_run_summaries(
 
     # --- Signals (derived from summary) ---
     try:
-        # Pick a concrete example payload for the verdict line (best-effort)
         top_trigger = None
         ex = summary.get("error_examples") or []
         if ex:
             top_trigger = ex[0].get("payload")
 
-        # Contract-check the summary before computing signals
         try:
             kind, w = validate_summary(summary)
-            summary["kind"] = kind  # normalize kind
+            summary["kind"] = kind
             if w:
-                print(
-                    _color(
-                        f"[CATE] Contract warnings (summary): {', '.join(w)}",
-                        _FG_YELLOW,
-                    )
-                )
+                print(_color(f"[CATE] Contract warnings (summary): {', '.join(w)}", _FG_YELLOW))
         except ContractError as ce:
             print(_color(f"[CATE] Contract error (summary): {ce}", _FG_YELLOW))
 
-        # Compute signals
         from cate.contracts import build_and_validate_signals
 
         signals = build_and_validate_signals(summary, strict=False)
         signals["mode"] = summary.get("mode", "default")
-        signals["top_trigger"] = top_trigger  # set before finalize
+        signals["top_trigger"] = top_trigger
         signals = finalize_signals(signals)
 
-        # Contract-check signals
         try:
             w = validate_signals(signals)
             if w:
-                print(
-                    _color(
-                        f"[CATE] Contract warnings (signals): {', '.join(w)}",
-                        _FG_YELLOW,
-                    )
-                )
+                print(_color(f"[CATE] Contract warnings (signals): {', '.join(w)}", _FG_YELLOW))
         except ContractError as ce:
             print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
-
 
         signals_json_path = write_signals_json(signals, str(output_path))
         signals_md_path = write_signals_md(signals, str(output_path))
 
-        # Markdown report (best-effort)
         try:
             report_path = write_report_md(
                 output_prefix=str(output_path),
@@ -980,7 +956,6 @@ def write_run_summaries(
         except Exception as exc:
             print(_color(f"[CATE] Failed to write report: {exc}", _FG_YELLOW))
 
-        # HTML report (best-effort)
         try:
             from .reporting import write_report_html
 
@@ -992,7 +967,7 @@ def write_run_summaries(
                 summary_md_path=str(md_path),
                 signals_json_path=signals_json_path,
                 signals_md_path=signals_md_path,
-                jsonl_path=str(output_path),  # fuzz JSONL == output_path
+                jsonl_path=str(output_path),
             )
             print(_color(f"[CATE] HTML report written to {html_report_path}", _FG_GREEN))
         except Exception as exc:
@@ -1002,6 +977,27 @@ def write_run_summaries(
         print(_color(f"[CATE] Signals written to {signals_md_path}", _FG_GREEN))
         _print_signal_verdict(signals)
 
+        # ✅ Evidence manifest (fuzz) — after all artifacts are present
+        try:
+            manifest_path = write_evidence_manifest(
+                output_prefix=str(output_path),
+                kind="http-fuzz",
+                env=env,
+                command=" ".join(sys.argv),
+                version=__version__,
+                extra={
+                    "mode": summary.get("mode", "default"),
+                    "target_url": (summary.get("target") or {}).get("url"),
+                    "method": (summary.get("target") or {}).get("method"),
+                    "concurrency": summary.get("concurrency"),
+                    "max_rps": summary.get("max_rps"),
+                    "total_payloads": summary.get("total_payloads"),
+                    "error_count": summary.get("error_count"),
+                },
+            )
+            print(_color(f"[CATE] Evidence manifest written to {manifest_path}", _FG_GREEN))
+        except Exception as exc:
+            print(_color(f"[CATE] Failed to write evidence manifest: {exc}", _FG_YELLOW))
 
     except Exception as exc:
         print(_color(f"[CATE] Failed to write signals: {exc}", _FG_YELLOW))
@@ -1010,12 +1006,6 @@ def write_run_summaries(
 def build_effective_config(args) -> Dict[str, Any]:
     """
     Combine profile (if any) + CLI flags into a single config dict.
-
-    Rules:
-      - If --profile is provided, it supplies the baseline config.
-      - CLI headers always override/extend profile headers.
-      - CLI env, output, and i-understand-prod are always honored.
-      - If no profile is given, URL and wordlist must be supplied via CLI.
     """
     headers_from_cli = parse_headers(args.header)
     profile_data: Dict[str, Any] | None = None
@@ -1115,7 +1105,6 @@ def run_http_fuzz(
     error_window: int,
     mode: str,
 ) -> int:
-    # Safety: block real prod runs without explicit flag
     if env == "prod" and not i_understand_prod and not dry_run:
         print(
             _color(
@@ -1125,7 +1114,6 @@ def run_http_fuzz(
         )
         return 1
 
-    # DRY RUN: show what *would* happen, then exit before making any requests
     if dry_run:
         print(_color("[CATE] DRY RUN — no HTTP requests will be sent.", _FG_MAGENTA))
         print(_color(f"[CATE] Environment: {env}", _FG_CYAN))
@@ -1145,7 +1133,6 @@ def run_http_fuzz(
         print(_color(f"[CATE] Placeholder: {placeholder}", _FG_CYAN))
         return 0
 
-    # Normal run header
     print(_color(f"[CATE] Environment: {env}", _FG_CYAN))
     print(
         _color(
@@ -1162,7 +1149,6 @@ def run_http_fuzz(
     if headers:
         print(_color(f"[CATE] Using headers: {headers!r}", _FG_CYAN))
 
-    # Build job config
     target = Target(url=url, method=method, headers=headers or None)
     config = JobConfig(
         target=target,
@@ -1193,19 +1179,9 @@ def run_http_fuzz(
             if r.error or (r.status_code is not None and r.status_code >= 500)
         )
         if errors:
-            print(
-                _color(
-                    f"[CATE] Completed {total} payloads ({errors} errors).",
-                    _FG_YELLOW,
-                )
-            )
+            print(_color(f"[CATE] Completed {total} payloads ({errors} errors).", _FG_YELLOW))
         else:
-            print(
-                _color(
-                    f"[CATE] Completed {total} payloads (0 errors).",
-                    _FG_GREEN,
-                )
-            )
+            print(_color(f"[CATE] Completed {total} payloads (0 errors).", _FG_GREEN))
 
         if output_path is not None:
             print(_color(f"[CATE] Results written to {output_path}", _FG_GREEN))
@@ -1218,10 +1194,6 @@ def run_http_fuzz(
 
 
 def lint_flows(flows_path: Optional[Path]) -> Tuple[Dict[str, Any], List[str], List[str]]:
-    """
-    Validate flows TOML can be loaded and has basic structure.
-    Returns: (flows_dict, warnings, errors)
-    """
     warnings: List[str] = []
     errors: List[str] = []
 
@@ -1230,13 +1202,11 @@ def lint_flows(flows_path: Optional[Path]) -> Tuple[Dict[str, Any], List[str], L
     except FileNotFoundError:
         raise
     except Exception as exc:
-        # TOML parse errors / unexpected exceptions
         raise ValueError(f"[CATE] Failed to parse flows file: {exc}") from exc
 
     if not flows:
         warnings.append("No flows found.")
 
-    # Basic structural checks
     for name, flow in flows.items():
         if not getattr(flow, "steps", None):
             errors.append(f"Flow '{name}' has no steps.")
@@ -1256,7 +1226,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # Handle http-fuzz -------------------------------------------------------
     if args.command == "http-fuzz":
         cfg = build_effective_config(args)
         return run_http_fuzz(
@@ -1279,22 +1248,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             mode=args.mode,
         )
 
-    # Handle http-flow ------------------------------------------------------
     elif args.command == "http-flow":
-        # Optional: allow overriding the flows file (default handled by flows module)
         flows_path = Path(args.flows_file) if getattr(args, "flows_file", None) else None
 
-        # Global flag conflict check
         if args.stop_on_fail and args.continue_on_fail:
-            print(
-                _color(
-                    "[CATE] Cannot use --stop-on-fail and --continue-on-fail together.",
-                    _FG_RED,
-                )
-            )
+            print(_color("[CATE] Cannot use --stop-on-fail and --continue-on-fail together.", _FG_RED))
             return 1
 
-        # --lint: validate flows and exit (no network)
         if getattr(args, "lint", False):
             try:
                 flows, warnings, errors = lint_flows(flows_path)
@@ -1302,11 +1262,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(_color(f"[CATE] {e}", _FG_RED))
                 return 1
             except ValueError as e:
-                # TOML parse error with enhanced context
                 print(_color(str(e), _FG_RED))
                 return 1
 
-            # Print override warnings (non-fatal)
             for w in warnings:
                 print(_color(f"[CATE] {w}", _FG_YELLOW))
 
@@ -1319,8 +1277,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(_color("[CATE] Flow lint passed (no issues found).", _FG_GREEN))
             return 0
 
-
-        # --list: enumerate flows and exit
         if args.list:
             try:
                 flows = load_flows(flows_path)
@@ -1341,13 +1297,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                     print(f"  - {name}")
             return 0
 
-        # Normal flow execution path
         if not args.flow:
             print(_color("[CATE] --flow is required unless --list is used.", _FG_RED))
             return 1
 
         try:
-            # NOTE: now passes `path=flows_path` so `--flows-file` is honored
             flow = load_flow(args.flow, path=flows_path)
         except FileNotFoundError as e:
             print(_color(f"[CATE] {e}", _FG_RED))
@@ -1369,15 +1323,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             print(line)
 
-        # CLI-provided variables for template interpolation
         initial_vars: Dict[str, Any] = {}
         if getattr(args, "var", None):
             initial_vars = parse_vars(args.var)
             if initial_vars:
                 print(_color(f"[CATE] Seeded flow vars: {initial_vars}", _FG_CYAN))
 
-        # DRY RUN: show what *would* happen, including interpolated templates,
-        # but do not send any HTTP requests (allowed even for prod).
         if args.dry_run:
             print(
                 _color(
@@ -1387,7 +1338,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             )
 
-            # We only have CLI-provided vars here; no extracted vars since we don't run.
             vars_map: Dict[str, Any] = dict(initial_vars)
 
             print(_color("[CATE] DRY RUN request preview:", _FG_CYAN))
@@ -1396,17 +1346,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 body_template = step.body_template
                 headers_template = step.headers or {}
 
-                # Apply template functions where possible; unknown vars stay as-is
                 url_preview = _apply_template_functions(url_template, vars_map)
-                body_preview = (
-                    _apply_template_functions(body_template, vars_map)
-                    if body_template is not None
-                    else None
-                )
-                headers_preview = {
-                    key: _apply_template_functions(value, vars_map)
-                    for key, value in headers_template.items()
-                }
+                body_preview = _apply_template_functions(body_template, vars_map) if body_template is not None else None
+                headers_preview = {k: _apply_template_functions(v, vars_map) for k, v in headers_template.items()}
 
                 print(f"  Step {idx}: {step.name}")
                 print(f"    {step.method} {url_preview}")
@@ -1417,12 +1359,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             return 0
 
-        # Safety: prevent accidental prod without explicit opt-in
         if args.env == "prod" and not args.i_understand_prod:
             print(
                 _color(
-                    "[CATE] Refusing to run flow against env=prod without "
-                    "--i-understand-prod flag. Aborting.",
+                    "[CATE] Refusing to run flow against env=prod without --i-understand-prod flag. Aborting.",
                     _FG_RED,
                 )
             )
@@ -1436,11 +1376,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         )
 
-        # Global fail-fast / continue behaviour
         stop_on_first_failure = bool(args.stop_on_fail)
         ignore_step_stop_flags = bool(args.continue_on_fail)
 
-        # CLI-provided variables for template interpolation
         initial_vars = {}
         if getattr(args, "var", None):
             initial_vars = parse_vars(args.var)
@@ -1473,14 +1411,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not r["ok"]:
                 failures += 1
 
-        # Optional: dump extracted variables (from extract_regex/store_as)
         if args.vars_dump:
             vars_map: Dict[str, Any] = {}
             for r in results:
                 var_name = r.get("extracted_var")
                 var_value = r.get("extracted_value")
                 if var_name is not None and var_value is not None:
-                    # last writer wins if the same var is extracted multiple times
                     vars_map[var_name] = var_value
 
             if not vars_map:
@@ -1490,9 +1426,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 for k, v in vars_map.items():
                     print(f"  - {k} = {v!r}")
 
-
-
-        # (optional) write outputs first
+        # write outputs first
         if args.output:
             written_paths = write_flow_logs(
                 output_prefix=args.output,
@@ -1513,7 +1447,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 else:
                     print(_color("[CATE] No output files written (all outputs disabled).", _FG_YELLOW))
 
-        # ✅ EXIT SNAPSHOT GOES HERE (before returns)
+        # exit snapshot
         if args.exit_snapshot and args.output:
             exit_status = "fail" if failures else "pass"
 
@@ -1540,7 +1474,27 @@ def main(argv: Optional[List[str]] = None) -> int:
             else:
                 print(_color("[CATE] Exit snapshot skipped: no exit URL found.", _FG_YELLOW))
 
-        # ✅ now return based on failures
+        # ✅ Evidence manifest (flow) — after logs + optional snapshot
+        if args.output:
+            try:
+                manifest_path = write_evidence_manifest(
+                    output_prefix=args.output,
+                    kind="http-flow",
+                    env=args.env,
+                    command=" ".join(sys.argv),
+                    version=__version__,
+                    extra={
+                        "flow": flow.name,
+                        "flows_file": args.flows_file,
+                        "mode": args.mode,
+                        "exit_snapshot": bool(args.exit_snapshot),
+                        "failures": failures,
+                    },
+                )
+                print(_color(f"[CATE] Evidence manifest written to {manifest_path}", _FG_GREEN))
+            except Exception as exc:
+                print(_color(f"[CATE] Failed to write evidence manifest: {exc}", _FG_YELLOW))
+
         if failures:
             print(_color(f"[CATE] Flow completed with {failures} failing step(s).", _FG_RED))
             return 1
@@ -1548,11 +1502,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(_color("[CATE] Flow completed successfully.", _FG_GREEN))
         return 0
 
-
-
-
-
-    # Fallback --------------------------------------------------------------
     parser.error("Unknown command")
     return 1
 
