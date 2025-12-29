@@ -249,3 +249,111 @@ def render_signals_md(signals: Dict[str, Any]) -> str:
                 lines.append(f"- `{k}`: **{latency[k]}**")
 
     return "\n".join(lines).rstrip() + "\n"
+
+# -----------------------------
+# Evidence manifest
+# -----------------------------
+import os
+import platform
+import socket
+from datetime import datetime, timezone
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _file_meta(path: Path) -> Dict[str, Any]:
+    st = path.stat()
+    return {
+        "path": str(path),
+        "name": path.name,
+        "bytes": int(st.st_size),
+        "mtime": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def collect_sibling_artifacts(output_prefix: str) -> Dict[str, Any]:
+    """
+    Looks for known sibling artifacts alongside the output prefix and returns a dict
+    of artifact name -> file metadata.
+
+    This is intentionally "best effort": it does not error if files are missing.
+    """
+    out = _normalize_output_prefix(output_prefix)
+    artifacts: Dict[str, Any] = {}
+
+    # canonical siblings
+    candidates = {
+        "results_jsonl": out.with_suffix(".jsonl"),
+        "summary_json": out.with_suffix(".summary.json"),
+        "summary_md": out.with_suffix(".summary.md"),
+        "report_html": out.with_suffix(".report.html"),
+        "report_md": out.with_suffix(".report.md"),
+        "signals_json": out.with_suffix(".signals.json"),
+        "signals_md": out.with_suffix(".signals.md"),
+    }
+
+    for key, p in candidates.items():
+        if p.exists() and p.is_file():
+            artifacts[key] = _file_meta(p)
+
+    # exit snapshots: <prefix>.exit.<status>.png
+    exit_snaps = sorted(out.parent.glob(out.name + ".exit.*.png"))
+    if exit_snaps:
+        artifacts["exit_snapshots_png"] = [_file_meta(p) for p in exit_snaps]
+
+    return artifacts
+
+
+def write_evidence_manifest(
+    *,
+    output_prefix: str,
+    kind: str,
+    env: Optional[str] = None,
+    command: Optional[str] = None,
+    version: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Writes: <prefix>.manifest.json
+
+    The manifest ties together all sibling artifacts (results, summary, report, signals, screenshots)
+    plus runtime metadata (env/kind/command/version).
+    """
+    out = _normalize_output_prefix(output_prefix)
+    path = out.with_suffix(".manifest.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest: Dict[str, Any] = {
+        "schema_version": 1,
+        "generated_at": _iso_now(),
+        "tool": {
+            "name": "cate",
+            "version": version or "unknown",
+        },
+        "run": {
+            "kind": kind,
+            "env": env,
+            "command": command,
+            "cwd": os.getcwd(),
+            "host": {
+                "hostname": socket.gethostname(),
+                "platform": platform.platform(),
+                "python": platform.python_version(),
+            },
+        },
+        "output": {
+            "prefix": str(out),
+            "dir": str(out.parent),
+        },
+        "artifacts": collect_sibling_artifacts(str(out)),
+    }
+
+    if extra:
+        # allow call sites to add flow name, urls, profile, etc
+        manifest["extra"] = extra
+
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    return str(path)
+
