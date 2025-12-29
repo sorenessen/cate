@@ -11,16 +11,11 @@ fi
 # -----------------------------
 # CATE smoke verification
 # -----------------------------
-# This script:
-#  - runs a known-safe demo http-flow (httpbin)
-#  - generates full artifact set + exit snapshot
-#  - asserts files exist + key content markers exist
-#
 # Usage:
 #   ./scripts/verify.sh
-#
 # Optional:
 #   VERIFY_OUTDIR=logs/verify ./scripts/verify.sh
+#   VERIFY_NO_SNAPSHOT=1 ./scripts/verify.sh   (CI-friendly)
 # -----------------------------
 
 VERIFY_OUTDIR="${VERIFY_OUTDIR:-logs/verify}"
@@ -31,16 +26,27 @@ mkdir -p "${VERIFY_OUTDIR}"
 
 echo "[verify] output prefix: ${OUT_PREFIX}"
 
-# Run a deterministic-ish safe flow
-# NOTE: adjust flows file path if yours isn't at repo root.
-cate http-flow \
+# Prefer installed CLI, but fall back to module invocation for CI robustness
+if command -v cate >/dev/null 2>&1; then
+  CATE_CMD=(cate)
+else
+  CATE_CMD=(python -m cate.cli)
+fi
+
+SNAPSHOT_ARGS=()
+if [[ "${VERIFY_NO_SNAPSHOT:-}" != "1" ]]; then
+  SNAPSHOT_ARGS=(--exit-snapshot)
+fi
+
+# Run a known-safe demo flow
+"${CATE_CMD[@]}" http-flow \
   --flows-file flows.toml \
   --flow demo-template-funcs \
   --output "${OUT_PREFIX}" \
   --mode recon \
-  --exit-snapshot
+  "${SNAPSHOT_ARGS[@]}"
 
-# Required artifacts
+# Required artifacts (snapshot optional)
 req=(
   "${OUT_PREFIX}.jsonl"
   "${OUT_PREFIX}.summary.json"
@@ -49,14 +55,17 @@ req=(
   "${OUT_PREFIX}.signals.md"
   "${OUT_PREFIX}.report.md"
   "${OUT_PREFIX}.report.html"
-  "${OUT_PREFIX}.exit.pass.png"
 )
+
+if [[ "${VERIFY_NO_SNAPSHOT:-}" != "1" ]]; then
+  req+=("${OUT_PREFIX}.exit.pass.png")
+fi
 
 for f in "${req[@]}"; do
   test -f "$f" || { echo "[verify] missing: $f"; exit 1; }
 done
 
-# Content assertions (these are the “it’s really the right report” checks)
+# Content assertions
 grep -q 'id="cate-data"' "${OUT_PREFIX}.report.html"
 grep -q '<title>CATE Report' "${OUT_PREFIX}.report.html"
 grep -q "## Executive summary" "${OUT_PREFIX}.report.md"
