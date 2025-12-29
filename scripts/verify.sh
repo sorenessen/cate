@@ -18,9 +18,19 @@ fi
 #   VERIFY_NO_SNAPSHOT=1 ./scripts/verify.sh   (CI-friendly)
 # -----------------------------
 
+# Default: overwrite a stable "current" prefix (no log explosion)
+# Optional: KEEP=1 -> timestamped historical run
 VERIFY_OUTDIR="${VERIFY_OUTDIR:-logs/verify}"
-RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
-OUT_PREFIX="${VERIFY_OUTDIR}/pass_${RUN_ID}"
+BASENAME="${BASENAME:-pass}"          # lets you do BASENAME=ci-pass if you want
+KEEP="${KEEP:-0}"
+
+if [[ "${KEEP}" == "1" ]]; then
+  RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+  OUT_PREFIX="${VERIFY_OUTDIR}/${BASENAME}_${RUN_ID}"
+else
+  OUT_PREFIX="${VERIFY_OUTDIR}/${BASENAME}"
+fi
+
 
 mkdir -p "${VERIFY_OUTDIR}"
 
