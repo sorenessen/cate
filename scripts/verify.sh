@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# repo root guard
+if [[ ! -f "./pyproject.toml" ]] || [[ ! -d "./scripts" ]]; then
+  echo "[verify] ERROR: run from the repo root (cate/):"
+  echo "         ./scripts/verify.sh"
+  exit 2
+fi
+
 # -----------------------------
 # CATE smoke verification
 # -----------------------------
