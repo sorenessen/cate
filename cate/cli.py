@@ -80,6 +80,43 @@ def _print_signal_verdict(signals: dict) -> None:
         )
     )
 
+def capture_exit_snapshot(url: str, output_prefix: str, status: str) -> str:
+    """
+    Best-effort browser screenshot using Playwright (if available).
+
+    Writes:
+      <output_prefix>.exit.<status>.png
+    Returns the PNG path as a string.
+
+    Requires:
+      pip install playwright
+      playwright install chromium
+    """
+    from pathlib import Path
+
+    # Lazy import so CATE still runs without playwright installed
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "Playwright is not installed. Install with: pip install playwright "
+            "then run: playwright install chromium"
+        ) from e
+
+    out_png = Path(f"{output_prefix}.exit.{status}.png")
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto(url, wait_until="networkidle", timeout=30_000)
+        page.wait_for_timeout(500)  # small settle
+        page.screenshot(path=str(out_png), full_page=True)
+        browser.close()
+
+    return str(out_png)
+
 
 def parse_headers(header_list: Optional[List[str]]) -> Dict[str, str]:
     """
@@ -381,6 +418,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    http_flow_parser.add_argument(
+        "--exit-snapshot",
+        action="store_true",
+        help="Capture a browser screenshot at flow exit (PASS or FAIL)"
+    )
+
+
     http_flow_parser.add_argument("--no-jsonl", action="store_true", help="Do not write <output>.jsonl")
     http_flow_parser.add_argument("--no-summary-md", action="store_true", help="Do not write <output>.summary.md")
     http_flow_parser.add_argument("--no-summary-json", action="store_true", help="Do not write <output>.summary.json")
@@ -442,6 +486,7 @@ def write_flow_logs(
     write_jsonl: bool = True,
     write_summary_md: bool = True,
     write_summary_json: bool = True,
+    mode: Optional[str] = None,
 ) -> List[Path]:
     """
     Write flow execution logs:
@@ -452,6 +497,7 @@ def write_flow_logs(
       - <output_prefix>.stepN_<name>.body.txt : (optional) response bodies
         for failing steps when save_body=True
     """
+
     written: List[Path] = []
 
     sj: Optional[str] = None
@@ -510,6 +556,7 @@ def write_flow_logs(
         "failures": failures,
         "avg_latency_ms": avg_ms,
         "final_vars": final_vars,
+        "mode": mode or "default",
     }
 
     # Add a few concrete failure examples (for signals/verdict)
@@ -572,7 +619,7 @@ def write_flow_logs(
         from cate.contracts import build_and_validate_signals
 
         signals = build_and_validate_signals(summary_obj)
-        signals["mode"] = summary.get("mode", "default")
+        signals["mode"] = summary_obj.get("mode", "default")
         signals = finalize_signals(signals)
 
 
@@ -871,7 +918,7 @@ def write_run_summaries(
     except Exception as exc:
         print(_color(f"[CATE] Failed to write Markdown summary: {exc}", _FG_YELLOW))
 
-        # --- Signals (derived from summary) ---
+    # --- Signals (derived from summary) ---
     try:
         # Pick a concrete example payload for the verdict line (best-effort)
         top_trigger = None
@@ -898,6 +945,7 @@ def write_run_summaries(
 
         signals = build_and_validate_signals(summary, strict=False)
         signals["mode"] = summary.get("mode", "default")
+        signals["top_trigger"] = top_trigger  # set before finalize
         signals = finalize_signals(signals)
 
         # Contract-check signals
@@ -913,9 +961,6 @@ def write_run_summaries(
         except ContractError as ce:
             print(_color(f"[CATE] Contract error (signals): {ce}", _FG_YELLOW))
 
-        signals["top_trigger"] = top_trigger
-
-        signals = finalize_signals(signals)
 
         signals_json_path = write_signals_json(signals, str(output_path))
         signals_md_path = write_signals_md(signals, str(output_path))
@@ -1274,6 +1319,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(_color("[CATE] Flow lint passed (no issues found).", _FG_GREEN))
             return 0
 
+
         # --list: enumerate flows and exit
         if args.list:
             try:
@@ -1444,6 +1490,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 for k, v in vars_map.items():
                     print(f"  - {k} = {v!r}")
 
+
+
+        # (optional) write outputs first
         if args.output:
             written_paths = write_flow_logs(
                 output_prefix=args.output,
@@ -1454,6 +1503,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 write_jsonl=not getattr(args, "no_jsonl", False),
                 write_summary_md=not getattr(args, "no_summary_md", False),
                 write_summary_json=not getattr(args, "no_summary_json", False),
+                mode=args.mode,
             )
 
             if not getattr(args, "quiet", False):
@@ -1463,17 +1513,44 @@ def main(argv: Optional[List[str]] = None) -> int:
                 else:
                     print(_color("[CATE] No output files written (all outputs disabled).", _FG_YELLOW))
 
+        # ✅ EXIT SNAPSHOT GOES HERE (before returns)
+        if args.exit_snapshot and args.output:
+            exit_status = "fail" if failures else "pass"
+
+            exit_url = None
+            if results:
+                if failures:
+                    for rr in results:
+                        if not rr.get("ok"):
+                            exit_url = rr.get("url")
+                            break
+                if exit_url is None:
+                    exit_url = results[-1].get("url")
+
+            if exit_url:
+                try:
+                    png_path = capture_exit_snapshot(
+                        url=exit_url,
+                        output_prefix=args.output,
+                        status=exit_status,
+                    )
+                    print(_color(f"[CATE] Exit snapshot written to {png_path}", _FG_GREEN))
+                except Exception as exc:
+                    print(_color(f"[CATE] Exit snapshot failed: {exc}", _FG_YELLOW))
+            else:
+                print(_color("[CATE] Exit snapshot skipped: no exit URL found.", _FG_YELLOW))
+
+        # ✅ now return based on failures
         if failures:
-            print(
-                _color(
-                    f"[CATE] Flow completed with {failures} failing step(s).",
-                    _FG_RED,
-                )
-            )
+            print(_color(f"[CATE] Flow completed with {failures} failing step(s).", _FG_RED))
             return 1
 
         print(_color("[CATE] Flow completed successfully.", _FG_GREEN))
         return 0
+
+
+
+
 
     # Fallback --------------------------------------------------------------
     parser.error("Unknown command")
