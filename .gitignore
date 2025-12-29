@@ -28,3 +28,4 @@ dist/
 build/
 *.egg-info/
 lab-backup-*.tgz
+docs/local-testing.md

@@ -554,6 +554,16 @@ Calypso Labs ecosystem integration.
 
 ---
 
+from root directory, run the verify script command:
+
+./scripts/verify.sh
+This writes logs/verify/pass.report.html, pass.summary.md, pass.exit.pass.png, etc
+
+Review the file to see what is happening under the hood.
+
+
+---
+
 ## Maintainer
 
 **Soren Essen**  
