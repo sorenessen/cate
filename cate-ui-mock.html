@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CATE — UI Mock (Wireframe) | Calypso Labs</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="CATE UI wireframe mock: flows, run console, artifacts, signals, history." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root{
+      --bg:#050815;
+      --bg-alt:#070b1e;
+      --panel: rgba(7,12,40,0.96);
+      --panel2: rgba(15,23,42,0.85);
+      --text:#e7ecff;
+      --muted:#a4b0d7;
+      --border: rgba(148,163,184,0.35);
+      --accent:#36c2ff;
+      --accent2:#7af2c9;
+      --radius: 16px;
+      --pill: 999px;
+      --max: 1180px;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family:"Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #0c1638 0, #050815 55%, #02030a 100%);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    a{ color:inherit; text-decoration:none; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+
+    .container{ max-width: var(--max); margin:0 auto; padding: 0 1.25rem; }
+
+    /* Header + breadcrumbs (match your site style) */
+    header{
+      position: sticky; top:0; z-index: 20;
+      backdrop-filter: blur(18px);
+      background: linear-gradient(to bottom, rgba(5,8,21,0.96), rgba(5,8,21,0.2));
+      border-bottom: 1px solid rgba(15,23,42,0.7);
+    }
+    .nav-inner{
+      height: 70px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:1rem;
+    }
+    .brand{ display:flex; align-items:center; gap:.75rem; }
+    .brand-logo{
+      width: 34px; height: 34px; border-radius: 50%;
+      position: relative; overflow: hidden;
+      box-shadow: 0 10px 26px rgba(0,0,0,0.6);
+      border: 1px solid rgba(59, 130, 246, 0.85);
+      background-image:
+        radial-gradient(circle at 20% 15%, #aefcf3 0, #5eead4 22%, transparent 55%),
+        radial-gradient(circle at 80% 90%, #bfdbfe 0, #2563eb 55%, #020617 100%),
+        radial-gradient(circle at 18% 75%, rgba(129, 230, 217, 0.9) 0, transparent 55%),
+        radial-gradient(circle at 65% 30%, rgba(129, 140, 248, 0.85) 0, transparent 55%);
+      animation: drift 5s ease-in-out infinite;
+    }
+    .brand-logo::before, .brand-logo::after{
+      content:""; position:absolute; border-radius: 50%;
+      background: radial-gradient(circle at 30% 20%, #e0f2fe, #60a5fa 55%, #1e40af 100%);
+      opacity:0.9;
+    }
+    .brand-logo::before{ width:11px; height:11px; top:18%; right:3px; }
+    .brand-logo::after{ width:8px; height:8px; bottom:8%; left:4px; }
+    @keyframes drift{ 0%{transform:translate(0,0) scale(1);} 50%{transform:translate(.5px,-.5px) scale(1.03);} 100%{transform:translate(0,0) scale(1);} }
+
+    .brand-text-title{
+      font-size:.9rem; font-weight:600; letter-spacing:.16em; text-transform:uppercase;
+    }
+    .brand-text-sub{ font-size:.72rem; color: var(--muted); }
+
+    .nav-links{
+      display:flex; gap:1.2rem; font-size:.82rem; color: var(--muted);
+    }
+    .nav-links span{ cursor:pointer; position:relative; padding-bottom:2px; }
+    .nav-links span::after{
+      content:""; position:absolute; left:0; bottom:0; width:0; height:2px; border-radius:999px;
+      background: linear-gradient(90deg,var(--accent),var(--accent2));
+      transition: width .16s ease-out;
+    }
+    .nav-links span:hover{ color: var(--text); }
+    .nav-links span:hover::after{ width:100%; }
+
+    .breadcrumb-bar{
+      background: rgba(5, 8, 21, 0.96);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+      font-size: .78rem;
+    }
+    .breadcrumb-inner{
+      padding: .45rem 1.25rem .5rem;
+      display:flex; align-items:center;
+      color: rgba(156, 163, 175, 1);
+    }
+    .back-link{
+      color: rgba(209, 213, 219, 1);
+      margin-right: 1.75rem; padding-right: 1.5rem;
+      border-right: 1px solid rgba(55, 65, 81, 0.6);
+    }
+    .back-link:hover{ color:#e5e7eb; }
+    .breadcrumb-inner > a:not(.back-link){ color: rgba(199, 210, 254, 1); }
+    .breadcrumb-inner > a:not(.back-link):hover{ text-decoration: underline; }
+    .crumb-sep{ margin: 0 .35rem; opacity: 0.6; }
+    .crumb-current{ color:#e5e7eb; font-weight:500; }
+
+    main{ padding: 1.6rem 0 3rem; }
+
+    /* App frame */
+    .app-title{
+      display:flex; align-items:baseline; justify-content:space-between; gap:1rem;
+      margin-bottom: .85rem;
+    }
+    .app-title h1{
+      font-size: 1.25rem;
+      margin:0;
+      letter-spacing: -0.02em;
+    }
+    .app-title .sub{
+      font-size:.82rem;
+      color: var(--muted);
+    }
+
+    .tabs{
+      display:flex; gap:.45rem; flex-wrap:wrap;
+      margin: .6rem 0 1rem;
+    }
+    .tab{
+      border: 1px solid rgba(148,163,184,0.45);
+      background: rgba(15,23,42,0.35);
+      padding: .35rem .7rem;
+      border-radius: var(--pill);
+      font-size: .78rem;
+      color: rgba(209,213,219,1);
+      cursor:pointer;
+      user-select:none;
+    }
+    .tab.active{
+      border-color: rgba(122,242,201,0.65);
+      box-shadow: 0 12px 32px rgba(26,114,255,0.22);
+      background: rgba(7,12,40,0.96);
+    }
+
+    .layout{
+      display:grid;
+      grid-template-columns: 300px minmax(0,1fr);
+      gap: 1rem;
+      align-items: start;
+    }
+    @media (max-width: 980px){
+      .layout{ grid-template-columns: 1fr; }
+    }
+
+    .panel{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 16px 42px rgba(0,0,0,0.65);
+      overflow:hidden;
+    }
+    .panel-header{
+      padding: .8rem .9rem;
+      border-bottom: 1px solid rgba(148,163,184,0.2);
+      display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+    }
+    .panel-header .title{
+      font-size: .85rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: rgba(148,163,184,1);
+    }
+    .panel-body{ padding: .9rem; }
+
+    /* Sidebar */
+    .section-label{
+      font-size: .75rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: rgba(148,163,184,1);
+      margin: .1rem 0 .55rem;
+    }
+    .list{ display:flex; flex-direction:column; gap:.45rem; }
+    .item{
+      border: 1px solid rgba(148,163,184,0.25);
+      border-radius: 12px;
+      padding: .6rem .65rem;
+      background: rgba(2,6,23,0.35);
+      cursor:pointer;
+    }
+    .item:hover{ border-color: rgba(122,242,201,0.35); }
+    .item .name{ font-size: .86rem; font-weight: 600; }
+    .item .meta{ font-size: .72rem; color: var(--muted); margin-top:.1rem; display:flex; gap:.45rem; flex-wrap:wrap; }
+    .pill{
+      border: 1px solid rgba(148,163,184,0.35);
+      border-radius: var(--pill);
+      padding: .08rem .5rem;
+      font-size: .7rem;
+      color: rgba(209,213,219,1);
+      background: rgba(15,23,42,0.25);
+    }
+    .pill.ok{ border-color: rgba(34,197,94,0.55); }
+    .pill.warn{ border-color: rgba(245,158,11,0.55); }
+    .pill.fail{ border-color: rgba(239,68,68,0.55); }
+
+    /* Controls + console */
+    .grid2{
+      display:grid;
+      grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+      gap: 1rem;
+    }
+    @media (max-width: 980px){
+      .grid2{ grid-template-columns: 1fr; }
+    }
+
+    label{
+      display:block;
+      font-size: .75rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: rgba(148,163,184,1);
+      margin-bottom: .35rem;
+    }
+    input, select{
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(51, 65, 85, 0.9);
+      background: rgba(15, 23, 42, 0.9);
+      color: var(--text);
+      padding: .55rem .65rem;
+      outline:none;
+      font-size: .85rem;
+    }
+    .row{ display:flex; gap:.7rem; flex-wrap:wrap; }
+    .row > div{ flex:1 1 180px; }
+
+    .btns{ display:flex; gap:.6rem; flex-wrap:wrap; margin-top:.8rem; }
+    .btn{
+      border-radius: var(--pill);
+      padding: .42rem 1.05rem;
+      font-size: .8rem;
+      border: 1px solid rgba(122,242,201,0.6);
+      background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 40%, #020617 100%);
+      color: #e5f0ff;
+      cursor:pointer;
+      box-shadow: 0 14px 40px rgba(26,114,255,0.45);
+    }
+    .btn.secondary{
+      border-color: rgba(148,163,184,0.55);
+      box-shadow:none;
+      background: rgba(15,23,42,0.6);
+      color: rgba(226,232,240,1);
+    }
+
+    .console{
+      border: 1px solid rgba(51, 65, 85, 0.9);
+      background: rgba(2, 6, 23, 0.65);
+      border-radius: 12px;
+      padding: .8rem .85rem;
+      min-height: 300px;
+      max-height: 420px;
+      overflow:auto;
+      color: rgba(226,232,240,1);
+      font-size: .82rem;
+      line-height: 1.35;
+      white-space: pre;
+    }
+    .console .dim{ color: rgba(148,163,184,0.95); }
+    .console .ok{ color: rgba(187,247,208,1); }
+    .console .warn{ color: rgba(254,215,170,1); }
+    .console .fail{ color: rgba(254,202,202,1); }
+
+    .hint{
+      margin-top:.6rem;
+      color: var(--muted);
+      font-size: .82rem;
+    }
+
+    /* Artifacts/signals table-like blocks */
+    .kv{
+      display:flex; flex-direction:column; gap:.5rem;
+      margin-top:.2rem;
+    }
+    .kv .line{
+      display:flex; justify-content:space-between; gap:1rem;
+      padding:.45rem .55rem;
+      border: 1px solid rgba(148,163,184,0.18);
+      background: rgba(2,6,23,0.28);
+      border-radius: 12px;
+      font-size:.84rem;
+    }
+    .kv .line span:first-child{ color: rgba(226,232,240,1); }
+    .kv .line span:last-child{ color: var(--muted); }
+
+    .badge{
+      display:inline-block;
+      padding: .12rem .55rem;
+      border-radius: var(--pill);
+      border: 1px solid rgba(148,163,184,0.35);
+      background: rgba(15,23,42,0.25);
+      font-size: .72rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: rgba(209,213,219,1);
+      white-space: nowrap;
+    }
+    .badge.med{ border-color: rgba(245,158,11,0.55); }
+    .badge.high{ border-color: rgba(239,68,68,0.55); }
+    .badge.low{ border-color: rgba(34,197,94,0.55); }
+
+    footer{
+      border-top: 1px solid rgba(148, 163, 184, 0.35);
+      padding: 1rem 0 1.4rem;
+      font-size: .78rem;
+      color: var(--muted);
+      background: #040614;
+      margin-top: 3rem;
+    }
+  </style>
+</head>
+
+<body>
+<header>
+  <div class="container nav-inner">
+    <div class="brand">
+      <div class="brand-logo" aria-hidden="true"></div>
+      <div>
+        <div class="brand-text-title">CALYPSO LABS</div>
+        <div class="brand-text-sub">Calypso Integrity Suite · CATE (UI Mock)</div>
+      </div>
+    </div>
+
+    <nav class="nav-links">
+      <span onclick="location.href='index.html'">Home</span>
+      <span onclick="location.href='integrity-suite.html'">Integrity Suite</span>
+      <span onclick="location.href='copycat.html'">CopyCat</span>
+      <span onclick="location.href='cate.html'">CATE</span>
+      <span onclick="location.href='ghostline.html'">GhostLine</span>
+    </nav>
+  </div>
+</header>
+
+<nav class="breadcrumb-bar">
+  <div class="container breadcrumb-inner">
+    <a href="javascript:history.back()" class="back-link">← Back</a>
+    <a href="index.html">Calypso Labs</a>
+    <span class="crumb-sep">›</span>
+    <a href="integrity-suite.html">Integrity Suite</a>
+    <span class="crumb-sep">›</span>
+    <span class="crumb-current">CATE UI Mock</span>
+  </div>
+</nav>
+
+<main class="container">
+  <div class="app-title">
+    <div>
+      <h1>CATE UI (Wireframe Mock)</h1>
+      <div class="sub">Local control surface for running flows, viewing artifacts, and comparing signals.</div>
+    </div>
+    <div class="sub">Project: <strong>delphonix-login</strong> · Env: <strong>dev</strong></div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <div class="tab" data-tab="flows">Flows</div>
+    <div class="tab active" data-tab="run">Run</div>
+    <div class="tab" data-tab="artifacts">Artifacts</div>
+    <div class="tab" data-tab="signals">Signals</div>
+    <div class="tab" data-tab="history">History</div>
+    <div class="tab" data-tab="settings">Settings</div>
+  </div>
+
+  <div class="layout">
+    <!-- LEFT RAIL -->
+    <aside class="panel">
+      <div class="panel-header">
+        <div class="title">Left Rail</div>
+        <div class="sub" style="font-size:.78rem;color:var(--muted);">Persistent context</div>
+      </div>
+      <div class="panel-body">
+        <div class="section-label">Flows</div>
+        <div class="list" id="flowList">
+          <div class="item" data-flow="login-flow">
+            <div class="name">login-flow</div>
+            <div class="meta">
+              <span class="pill">flows.toml</span>
+              <span class="pill">auth</span>
+            </div>
+          </div>
+          <div class="item" data-flow="signup-flow">
+            <div class="name">signup-flow</div>
+            <div class="meta">
+              <span class="pill">flows.toml</span>
+              <span class="pill">onboarding</span>
+            </div>
+          </div>
+          <div class="item" data-flow="password-reset">
+            <div class="name">password-reset</div>
+            <div class="meta">
+              <span class="pill">flows.toml</span>
+              <span class="pill">recovery</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top:1rem;">Recent Runs</div>
+        <div class="list" id="runList">
+          <div class="item" data-run="run_2026-01-17_001">
+            <div class="name">run_2026-01-17_001</div>
+            <div class="meta">
+              <span class="pill ok">PASS</span>
+              <span class="pill">login-flow</span>
+            </div>
+          </div>
+          <div class="item" data-run="run_2026-01-16_004">
+            <div class="name">run_2026-01-16_004</div>
+            <div class="meta">
+              <span class="pill warn">WARN</span>
+              <span class="pill">login-flow</span>
+            </div>
+          </div>
+          <div class="item" data-run="run_2026-01-16_003">
+            <div class="name">run_2026-01-16_003</div>
+            <div class="meta">
+              <span class="pill fail">FAIL</span>
+              <span class="pill">signup-flow</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hint">
+          This is a mock. In the real UI, selecting a flow pre-fills run controls and selecting a run loads artifacts/signals.
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN WORKSPACE -->
+    <section class="panel">
+      <div class="panel-header">
+        <div class="title" id="mainTitle">Run</div>
+        <div class="sub" style="font-size:.78rem;color:var(--muted);">
+          Source of truth is the CLI — UI is a client.
+        </div>
+      </div>
+
+      <div class="panel-body">
+        <!-- RUN TAB CONTENT -->
+        <div id="tab-run" class="tabpage">
+          <div class="grid2">
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header">
+                <div class="title">Run Controls</div>
+                <span class="badge low">Safety: OK</span>
+              </div>
+              <div class="panel-body">
+                <div class="row">
+                  <div>
+                    <label for="flow">Flow</label>
+                    <select id="flow">
+                      <option>login-flow</option>
+                      <option>signup-flow</option>
+                      <option>password-reset</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="mode">Mode</label>
+                    <select id="mode">
+                      <option>auth-pressure</option>
+                      <option>http-fuzz</option>
+                      <option>snapshot-only</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="row" style="margin-top:.75rem;">
+                  <div>
+                    <label for="concurrency">Concurrency</label>
+                    <input id="concurrency" value="5" />
+                  </div>
+                  <div>
+                    <label for="maxrps">Max RPS</label>
+                    <input id="maxrps" value="3.0" />
+                  </div>
+                  <div>
+                    <label for="stop">Stop on error rate</label>
+                    <input id="stop" value="0.50" />
+                  </div>
+                </div>
+
+                <div class="row" style="margin-top:.75rem;">
+                  <div>
+                    <label for="vars">Vars (key=value)</label>
+                    <input id="vars" value="username=cate_test, password=password" />
+                  </div>
+                </div>
+
+                <div class="btns">
+                  <button class="btn" id="btnRun">Run</button>
+                  <button class="btn secondary" id="btnDry">Dry run</button>
+                  <button class="btn secondary" id="btnCopyCmd">Copy command</button>
+                </div>
+
+                <div class="hint">
+                  In v1, “Run” would spawn the CLI and stream stdout/stderr into the console below (no simulation).
+                </div>
+              </div>
+            </div>
+
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header">
+                <div class="title">Live Summary (Text-first)</div>
+                <span class="badge med">Signals: 3</span>
+              </div>
+              <div class="panel-body">
+                <div class="kv">
+                  <div class="line"><span>cadence_burst</span><span>count: 7 · confidence: 0.72</span></div>
+                  <div class="line"><span>retry_loop</span><span>count: 4 · confidence: 0.81</span></div>
+                  <div class="line"><span>traversal_anomaly</span><span>count: 1 · confidence: 0.66</span></div>
+                </div>
+                <div class="hint">No charts required in v1. Text + evidence wins trust.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel" style="margin-top:1rem; box-shadow:none;">
+            <div class="panel-header">
+              <div class="title">Console (stdout/stderr)</div>
+              <div class="sub" style="font-size:.78rem;color:var(--muted);">Embedded terminal pane</div>
+            </div>
+            <div class="panel-body">
+              <div class="console" id="console">
+<span class="dim">[CATE] Environment: dev</span>
+<span class="dim">[CATE] Flow: login-flow · Mode: auth-pressure</span>
+<span class="dim">[CATE] Config: concurrency=5, max_rps=3.0, stop_on_error_rate=0.50</span>
+
+<span class="ok">[CATE] Starting run…</span>
+[12:02:01] → GET /login
+[12:02:01] ← 200 OK
+[12:02:02] → POST /login (username=cate_test)
+[12:02:02] ← 401 Unauthorized
+<span class="warn">[signal] retry_loop (count=1)</span>
+[12:02:02] → POST /login (username=cate_test)
+[12:02:02] ← 401 Unauthorized
+<span class="warn">[signal] cadence_burst (window=2s)</span>
+
+<span class="dim">[CATE] Artifacts: logs/delphonix/login.*</span>
+              </div>
+              <div class="hint">Mock output only. Real UI should pass through raw text, preserving ANSI colors if possible.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ARTIFACTS TAB -->
+        <div id="tab-artifacts" class="tabpage" style="display:none;">
+          <div class="grid2">
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header"><div class="title">Artifacts (Tree)</div></div>
+              <div class="panel-body">
+                <div class="kv">
+                  <div class="line"><span>logs/requests.jsonl</span><span>open</span></div>
+                  <div class="line"><span>logs/responses.jsonl</span><span>open</span></div>
+                  <div class="line"><span>reports/summary.md</span><span>render</span></div>
+                  <div class="line"><span>reports/summary.html</span><span>render</span></div>
+                  <div class="line"><span>signals/signals.json</span><span>open</span></div>
+                  <div class="line"><span>signals/signals.md</span><span>render</span></div>
+                </div>
+                <div class="hint">In v1, clicking opens a raw viewer or rendered preview.</div>
+              </div>
+            </div>
+
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header"><div class="title">Preview</div></div>
+              <div class="panel-body">
+                <pre style="margin:0; padding:.85rem .9rem; border-radius:12px; border:1px solid rgba(51,65,85,0.9); background: rgba(15,23,42,0.85); color: rgba(226,232,240,1); overflow:auto;">
+# CATE Run Summary — WARN
+
+Flow: login-flow
+Mode: auth-pressure
+Artifacts: logs/delphonix/login.*
+
+Signals:
+- cadence_burst (7)
+- retry_loop (4)
+- traversal_anomaly (1)
+                </pre>
+                <div class="hint">Preview area can render markdown/html or show raw text.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SIGNALS TAB -->
+        <div id="tab-signals" class="tabpage" style="display:none;">
+          <div class="grid2">
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header"><div class="title">Signals (This Run)</div></div>
+              <div class="panel-body">
+                <div class="kv">
+                  <div class="line"><span>cadence_burst</span><span><span class="badge med">MED</span> · count: 7</span></div>
+                  <div class="line"><span>retry_loop</span><span><span class="badge med">MED</span> · count: 4</span></div>
+                  <div class="line"><span>traversal_anomaly</span><span><span class="badge high">HIGH</span> · count: 1</span></div>
+                </div>
+                <div class="hint">Severity is derived; signals are facts.</div>
+              </div>
+            </div>
+
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header"><div class="title">Diff vs Previous Run</div></div>
+              <div class="panel-body">
+                <div class="kv">
+                  <div class="line"><span>retry_loop</span><span>↑ +12%</span></div>
+                  <div class="line"><span>cadence_burst</span><span>↑ +4%</span></div>
+                  <div class="line"><span>entropy_collapse</span><span>—</span></div>
+                </div>
+                <div class="hint">Run-to-run diffs are the main “UI value add.”</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- HISTORY TAB -->
+        <div id="tab-history" class="tabpage" style="display:none;">
+          <div class="panel" style="box-shadow:none;">
+            <div class="panel-header"><div class="title">Run History</div></div>
+            <div class="panel-body">
+              <div class="kv">
+                <div class="line"><span>2026-01-17 · login-flow</span><span class="pill ok">PASS</span></div>
+                <div class="line"><span>2026-01-16 · login-flow</span><span class="pill warn">WARN</span></div>
+                <div class="line"><span>2026-01-16 · signup-flow</span><span class="pill fail">FAIL</span></div>
+              </div>
+              <div class="hint">Selecting a run loads its artifacts and signals.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FLOWS TAB -->
+        <div id="tab-flows" class="tabpage" style="display:none;">
+          <div class="grid2">
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header"><div class="title">Flow Definition (Read-only)</div></div>
+              <div class="panel-body">
+                <pre style="margin:0; padding:.85rem .9rem; border-radius:12px; border:1px solid rgba(51,65,85,0.9); background: rgba(15,23,42,0.85); color: rgba(226,232,240,1); overflow:auto;">
+[flow.login-flow]
+steps = [
+  { method="GET",  url="/login" },
+  { method="POST", url="/login", body="username={username}&password={password}" }
+]
+                </pre>
+                <div class="hint">In v1, this can render TOML/YAML with basic validation status.</div>
+              </div>
+            </div>
+
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header"><div class="title">Variables & Defaults</div></div>
+              <div class="panel-body">
+                <div class="kv">
+                  <div class="line"><span>username</span><span>cate_test</span></div>
+                  <div class="line"><span>password</span><span>********</span></div>
+                  <div class="line"><span>base_url</span><span>http://localhost:8080</span></div>
+                </div>
+                <div class="hint">Values shown here are defaults; run-time overrides appear in Run controls.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div id="tab-settings" class="tabpage" style="display:none;">
+          <div class="grid2">
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header"><div class="title">Settings</div></div>
+              <div class="panel-body">
+                <div class="kv">
+                  <div class="line"><span>CLI Path</span><span>/usr/local/bin/cate</span></div>
+                  <div class="line"><span>Workspace</span><span>~/cate-workspace</span></div>
+                  <div class="line"><span>ANSI Color</span><span>enabled</span></div>
+                </div>
+                <div class="hint">This is where you’d later wire iTerm integration or embedded PTY logic.</div>
+              </div>
+            </div>
+
+            <div class="panel" style="box-shadow:none;">
+              <div class="panel-header"><div class="title">About</div></div>
+              <div class="panel-body">
+                <div class="hint" style="margin-top:0;">
+                  CATE UI is a client for the CLI. Engines remain authoritative. Signals are facts; severity is derived.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="container">
+    © <span id="year"></span> Calypso Labs. CATE is part of the Calypso Integrity Suite.
+  </div>
+</footer>
+
+<script>
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  // Simple tab switching for the mock
+  const tabs = document.querySelectorAll(".tab");
+  const pages = {
+    flows: document.getElementById("tab-flows"),
+    run: document.getElementById("tab-run"),
+    artifacts: document.getElementById("tab-artifacts"),
+    signals: document.getElementById("tab-signals"),
+    history: document.getElementById("tab-history"),
+    settings: document.getElementById("tab-settings"),
+  };
+  const mainTitle = document.getElementById("mainTitle");
+
+  tabs.forEach(t => {
+    t.addEventListener("click", () => {
+      tabs.forEach(x => x.classList.remove("active"));
+      t.classList.add("active");
+      Object.values(pages).forEach(p => p.style.display = "none");
+      const key = t.dataset.tab;
+      pages[key].style.display = "block";
+      mainTitle.textContent = t.textContent;
+    });
+  });
+
+  // Mock “Run” button: append a line to console
+  const consoleEl = document.getElementById("console");
+  document.getElementById("btnRun").addEventListener("click", () => {
+    consoleEl.textContent += "\n[12:02:08] → POST /login\n[12:02:08] ← 401 Unauthorized\n[signal] retry_loop (count=5)\n";
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  });
+
+  // Copy command mock
+  document.getElementById("btnCopyCmd").addEventListener("click", async () => {
+    const flow = document.getElementById("flow").value;
+    const mode = document.getElementById("mode").value;
+    const concurrency = document.getElementById("concurrency").value;
+    const maxrps = document.getElementById("maxrps").value;
+    const stop = document.getElementById("stop").value;
+    const vars = document.getElementById("vars").value;
+
+    const cmd =
+`cate http-flow \\
+  --flows-file flows.toml \\
+  --flow ${flow} \\
+  --mode ${mode} \\
+  --concurrency ${concurrency} \\
+  --max-rps ${maxrps} \\
+  --stop-on-error-rate ${stop} \\
+  --var ${vars.replace(/,\s*/g, " --var ")}`;
+
+    try{
+      await navigator.clipboard.writeText(cmd);
+      alert("Copied CLI command to clipboard.");
+    }catch(e){
+      alert("Could not access clipboard. Here is the command:\n\n" + cmd);
+    }
+  });
+
+  // Clicking flow in left rail pre-fills selector (mock behavior)
+  document.querySelectorAll("#flowList .item").forEach(item => {
+    item.addEventListener("click", () => {
+      document.getElementById("flow").value = item.dataset.flow;
+    });
+  });
+</script>
+</body>
+</html>
