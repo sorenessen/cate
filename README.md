@@ -1,5 +1,6 @@
-> **Disclaimer (placeholders):** All domains, endpoints, org names, usernames, and credentials below are **examples**.
-> Replace them with values for **systems you own or have explicit permission to test**.
+
+⚠️ **Disclaimer (placeholders):** All domains, endpoints, org names, usernames, and credentials below are **examples**.
+ Replace them with values for **systems you own or have explicit permission to test**.
 
 # CATE — Calypso Automated Testing Engine
 
