@@ -27,6 +27,45 @@ These guarantees are defined in the formal invariants document:
 
 ➡️ **[CATE Formal Invariants](docs/invariants.md)**
 
+## Get CATE (clone + install)
+
+### 1) Clone the repo
+```bash
+git clone https://github.com/sorenessen/cate.git
+cd cate
+```
+### 2) Create virtual environment
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # macOS/Linux
+# .\.venv\Scripts\activate         # Windows (PowerShell)
+```
+### 3) Install dependencies + CATE
+```bash
+python -m pip install -U pip
+pip install -r requirements.txt
+pip install -e .
+```
+### 4) Confirm it works
+```bash
+python -m cate.cli --help
+python -m cate.cli http-fuzz --help
+python -m cate.cli http-flow --help
+```
+### UPDATE to latest version
+```bash
+cd cate
+git pull
+pip install -r requirements.txt
+pip install -e .
+```
+### Verify (repo self-check)
+From the repo root:
+```bash
+./scripts/verify.sh
+```
+This writes `logs/verify/pass.report.html`, `pass.summary.md`, `pass.exit.pass.png`, etc.
+
 
 ## Table of Contents
 - [Features](#features)
