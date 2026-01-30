@@ -56,13 +56,19 @@ python -m cate.cli --help
 python -m cate.cli http-fuzz --help
 python -m cate.cli http-flow --help
 ```
-### UPDATE to latest version
+### 5) Update to latest version
 ```bash
 cd cate
 git pull
 pip install -r requirements.txt
 pip install -e .
 ```
+### 6) Reporting with Chromium (required for interactive HTML offline reports)
+```bash
+pip install playwright
+playwright install chromium
+```
+
 ### Verify (repo self-check)
 From the repo root:
 ```bash
