@@ -31,9 +31,7 @@ lab-backup-*.tgz
 docs/local-testing.md
 ui_runs/
 
-# CATE run artifacts / local outputs
-ui_runs/
-logs/
+
 *.report.html
 *.manifest.json
 *.summary.json
