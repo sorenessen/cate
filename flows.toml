@@ -10,14 +10,14 @@ steps = ["login", "about"]
 
 [flows.example-login-sequence.login]
 method = "POST"
-url = "https://example.com/login.php"
+url = "https://example.com"
 body_template = "user=admin&pass={password}"
 capture_cookies = true
 stop_on_fail = false
 
 [flows.example-login-sequence.about]
 method = "GET"
-url = "https://example.com/about.html"
+url = "https://example.com"
 expect_status = 200
 max_latency_ms = 500.0          # TEST: or 1000.0
 body_must_contain = "About"     # TEST: proves the page loaded
@@ -33,7 +33,7 @@ body_must_contain = "About"     # TEST: proves the page loaded
 
 # [flows.example-login-sequence-vars.login]
 # method = "POST"
-# url = "https://example.com/login.php"
+# url = "https://example.com"
 # body_template = "user=admin&pass={password}"
 # capture_cookies = true
 
@@ -45,12 +45,12 @@ body_must_contain = "About"     # TEST: proves the page loaded
 
 # [flows.example-login-sequence-vars.about]
 # method = "GET"
-# url = "https://example.com/about.html?m={marker}"
+# url = "https://example.com{marker}"
 # expect_status = 200
 
 # [flows.example-login-sequence-vars.echo]
 # method = "GET"
-# url = "https://example.com/about.html?marker={urlencode(marker)}&step=echo"
+# url = "https://example.com{urlencode(marker)}&step=echo"
 # expect_status = 200
 # body_must_contain = "About"
 # headers = { X-CATE-Marker = "{marker}" }
@@ -61,7 +61,7 @@ body_must_contain = "About"     # TEST: proves the page loaded
 
 # [flows.example-login-cli-vars.login]
 # method = "POST"
-# url = "https://example.com/login.php"
+# url = "https://example.com"
 # headers = { Content-Type = "application/x-www-form-urlencoded" }
 # body_template = "username={username}&password={password}"
 # capture_cookies = true
@@ -71,7 +71,7 @@ body_must_contain = "About"     # TEST: proves the page loaded
 
 # [flows.example-login-cli-vars.about]
 # method = "GET"
-# url = "https://example.com/about.php"
+# url = "https://example.com"
 # expect_status = 200
 # body_must_not_contain = "Login or Sign Up"
 
@@ -81,7 +81,7 @@ steps = ["get-login", "login", "about"]
 
 [flows.example-login-cli-vars.get-login]
 method = "GET"
-url = "https://example.com/login.php"
+url = "https://example.com"
 capture_cookies = true
 extract_regex = 'name="csrf_token" value="([^"]+)"'
 store_as = "csrf"
@@ -89,7 +89,7 @@ require_extracted = true
 
 [flows.example-login-cli-vars.login]
 method = "POST"
-url = "https://example.com/login.php"
+url = "https://example.com"
 capture_cookies = true
 headers = { Content-Type = "application/x-www-form-urlencoded" }
 body_template = "csrf_token={csrf}&redirect=%2Fabout.html&username={username}&password={password}&action=login"
@@ -98,7 +98,7 @@ body_must_not_contain = "Login or Sign Up"
 
 [flows.example-login-cli-vars.about]
 method = "GET"
-url = "https://example.com/about.html"
+url = "https://example.com"
 expect_status = 200
 body_must_not_contain = "Login or Sign Up"
 
