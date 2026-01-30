@@ -1,10 +1,9 @@
 [flows.demo-echo]
-description = "Tiny demo flow loaded via include."
+description = "Tiny demo flow (safe public example)."
 steps = ["echo"]
 
 [flows.demo-echo.echo]
 method = "GET"
-# url = "https://delphonix.com/about.html"
-url = "https://delphonix.com/about.html?marker={urlencode(marker)}&step=echo"
-
+url = "https://example.com/about.html?marker={urlencode(marker)}&step=echo"
 expect_status = 200
+
