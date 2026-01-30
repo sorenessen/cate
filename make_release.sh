@@ -128,7 +128,7 @@ OUT_FILE="RELEASE_NOTES_DRAFT.md"
   echo
   echo "- [x] \`python -m cate.cli --version\` reports v${NEW_VER}"
   echo "- [x] Sample \`http-fuzz\` run (with a dev profile) completes and writes JSONL + summaries"
-  echo "- [x] Sample \`http-flow\` (e.g. delphonix-login-sequence-vars) passes in dev with logs written"
+  echo "- [x] Sample \`http-flow\` (e.g. example-login-sequence-vars) passes in dev with logs written"
   echo "- [x] \`--stop-on-fail\` + per-step \`stop_on_fail = true\` behave as expected"
   echo "- [x] \`--continue-on-fail\` executes all steps even when earlier ones fail"
   echo "- [x] \`--vars-dump\` prints extracted variables correctly"

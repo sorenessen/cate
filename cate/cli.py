@@ -313,7 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         type=str,
         default=None,
-        help="Optional profile name to load from profiles.toml (e.g. 'delphonix-login-dev').",
+        help="Optional profile name to load from profiles.toml (e.g. 'example-login-dev').",
     )
 
     # Safety controls
@@ -352,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run a multi-step HTTP flow defined in flows.toml",
     )
     http_flow_parser.add_argument("--flows-file", type=str, default="flows.toml", help="Path to flows TOML file (default: flows.toml).")
-    http_flow_parser.add_argument("--flow", type=str, required=False, help="Flow name from flows.toml (e.g. delphonix-login-sequence).")
+    http_flow_parser.add_argument("--flow", type=str, required=False, help="Flow name from flows.toml (e.g. example-login-sequence).")
     http_flow_parser.add_argument("--list", action="store_true", help="List available flows from flows.toml and exit.")
     http_flow_parser.add_argument("--lint", action="store_true", help="Validate flows TOML structure/types and exit (no network). Non-zero on errors.")
     http_flow_parser.add_argument("--timeout", type=float, default=10.0, help="Per-request timeout in seconds. Default: 10")

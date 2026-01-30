@@ -7,7 +7,7 @@ All activity is intended to observe, measure, and document defensive behavior â€
 ## Authorized Environment
 - Localhost
 - Containerized test environments
-- Privately owned domains and infrastructure (e.g. delphonix.com)
+- Privately owned domains and infrastructure (e.g. example.com)
 - Systems not exposed to the public internet unless explicitly configured
 
 ## Explicitly Out of Scope

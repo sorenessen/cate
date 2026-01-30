@@ -136,7 +136,7 @@ All notable changes to **CATE — Calypso Automated Testing Engine** are documen
     - Refuses to run with `--env prod` unless `--i-understand-prod` is present.
 - README:
   - Added **Stateful flows (v0.3)** section with examples for `flows.toml`, variable extraction, and flow reports.
-  - Documented example run for `delphonix-login-sequence` and `delphonix-login-sequence-vars`.
+  - Documented example run for `example-login-sequence` and `example-login-sequence-vars`.
 
 ---
 

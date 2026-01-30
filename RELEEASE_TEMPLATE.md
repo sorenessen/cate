@@ -31,7 +31,7 @@ Examples: new HTTP-flow capabilities, richer assertions, better logging, safer p
 
 - ✅ `python -m cate.cli --version` reports **{{VERSION}}**
 - ✅ Sample `http-fuzz` run (with a dev profile) completes and writes JSONL + summaries
-- ✅ Sample `http-flow` (e.g. `delphonix-login-sequence-vars`) passes in **dev**
+- ✅ Sample `http-flow` (e.g. `example-login-sequence-vars`) passes in **dev**
 - ✅ `--stop-on-fail` stops the flow on first failure (and respects per-step `stop_on_fail = true`)
 - ✅ `--continue-on-fail` runs through all steps even when some fail
 - ✅ `--vars-dump` prints extracted variables from `extract_regex` / `store_as` steps

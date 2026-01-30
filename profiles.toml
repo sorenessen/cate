@@ -1,5 +1,5 @@
-[profiles.delphonix-login-dev]
-url = "https://delphonix.com/login.php"
+[profiles.example-login-dev]
+url = "https://example.com/login.php"
 method = "POST"
 wordlist = "./cate/tests/test_wordlist.txt"
 body_template = "user=admin&pass={payload}"
