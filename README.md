@@ -590,16 +590,14 @@ Example: %00 becomes %2500 because % is encoded as %25.
 ## Roadmap
 
 ### v0.2  
-Richer logging & Markdown reports.
-
+~~Richer logging & Markdown reports.~~ ✅
 ### v0.3  
-Stateful flows, cookie/session support.
-
+~~Stateful flows, cookie/session support.~~ ✅
 ### v0.4  
-Distributed workers, queues, GUI dashboard.
+Distributed workers, queues, GUI dashboard. 🛠️
 
 ### v0.5  
-Calypso Labs ecosystem integration.
+Calypso Labs ecosystem integration. 🛠️
 
 ---
 
