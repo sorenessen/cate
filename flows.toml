@@ -2,22 +2,22 @@
 # include = ["flows/demo-flows.toml"]
 
 
-[flows.delphonix-login-sequence]
+[flows.example-login-sequence]
 description = "Login as admin, then fetch about page."
 
 # Step order
 steps = ["login", "about"]
 
-[flows.delphonix-login-sequence.login]
+[flows.example-login-sequence.login]
 method = "POST"
-url = "https://delphonix.com/login.php"
+url = "https://example.com/login.php"
 body_template = "user=admin&pass={password}"
 capture_cookies = true
 stop_on_fail = false
 
-[flows.delphonix-login-sequence.about]
+[flows.example-login-sequence.about]
 method = "GET"
-url = "https://delphonix.com/about.html"
+url = "https://example.com/about.html"
 expect_status = 200
 max_latency_ms = 500.0          # TEST: or 1000.0
 body_must_contain = "About"     # TEST: proves the page loaded
@@ -27,13 +27,13 @@ body_must_contain = "About"     # TEST: proves the page loaded
 # # ---------------------------------------------------------
 # # Demo flow with variable extraction & reuse
 # # ---------------------------------------------------------
-# [flows.delphonix-login-sequence-vars]
+# [flows.example-login-sequence-vars]
 # description = "Login as admin, then fetch about page (with variable extraction demo)."
 # steps = ["login", "about", "echo"]
 
-# [flows.delphonix-login-sequence-vars.login]
+# [flows.example-login-sequence-vars.login]
 # method = "POST"
-# url = "https://delphonix.com/login.php"
+# url = "https://example.com/login.php"
 # body_template = "user=admin&pass={password}"
 # capture_cookies = true
 
@@ -43,25 +43,25 @@ body_must_contain = "About"     # TEST: proves the page loaded
 # store_as = "marker"
 # require_extracted = true   # <— NEW: fail step if regex doesn't match
 
-# [flows.delphonix-login-sequence-vars.about]
+# [flows.example-login-sequence-vars.about]
 # method = "GET"
-# url = "https://delphonix.com/about.html?m={marker}"
+# url = "https://example.com/about.html?m={marker}"
 # expect_status = 200
 
-# [flows.delphonix-login-sequence-vars.echo]
+# [flows.example-login-sequence-vars.echo]
 # method = "GET"
-# url = "https://delphonix.com/about.html?marker={urlencode(marker)}&step=echo"
+# url = "https://example.com/about.html?marker={urlencode(marker)}&step=echo"
 # expect_status = 200
 # body_must_contain = "About"
 # headers = { X-CATE-Marker = "{marker}" }
 
-# [flows.delphonix-login-cli-vars]
+# [flows.example-login-cli-vars]
 # description = "Login using CLI-provided username/password, then fetch about page."
 # steps = ["login", "about"]
 
-# [flows.delphonix-login-cli-vars.login]
+# [flows.example-login-cli-vars.login]
 # method = "POST"
-# url = "https://delphonix.com/login.php"
+# url = "https://example.com/login.php"
 # headers = { Content-Type = "application/x-www-form-urlencoded" }
 # body_template = "username={username}&password={password}"
 # capture_cookies = true
@@ -69,36 +69,36 @@ body_must_contain = "About"     # TEST: proves the page loaded
 # body_must_not_contain = "Login or Sign Up"
 
 
-# [flows.delphonix-login-cli-vars.about]
+# [flows.example-login-cli-vars.about]
 # method = "GET"
-# url = "https://delphonix.com/about.php"
+# url = "https://example.com/about.php"
 # expect_status = 200
 # body_must_not_contain = "Login or Sign Up"
 
-[flows.delphonix-login-cli-vars]
+[flows.example-login-cli-vars]
 description = "Login using CLI username/password with CSRF token, then fetch about page."
 steps = ["get-login", "login", "about"]
 
-[flows.delphonix-login-cli-vars.get-login]
+[flows.example-login-cli-vars.get-login]
 method = "GET"
-url = "https://delphonix.com/login.php"
+url = "https://example.com/login.php"
 capture_cookies = true
 extract_regex = 'name="csrf_token" value="([^"]+)"'
 store_as = "csrf"
 require_extracted = true
 
-[flows.delphonix-login-cli-vars.login]
+[flows.example-login-cli-vars.login]
 method = "POST"
-url = "https://delphonix.com/login.php"
+url = "https://example.com/login.php"
 capture_cookies = true
 headers = { Content-Type = "application/x-www-form-urlencoded" }
 body_template = "csrf_token={csrf}&redirect=%2Fabout.html&username={username}&password={password}&action=login"
 expect_status = 200
 body_must_not_contain = "Login or Sign Up"
 
-[flows.delphonix-login-cli-vars.about]
+[flows.example-login-cli-vars.about]
 method = "GET"
-url = "https://delphonix.com/about.html"
+url = "https://example.com/about.html"
 expect_status = 200
 body_must_not_contain = "Login or Sign Up"
 
