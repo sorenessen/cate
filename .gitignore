@@ -32,6 +32,8 @@ lab-backup-*.tgz
 docs/local-testing.md
 ui_runs/
 
+# Private/local-only flows
+flows_private/
 
 *.report.html
 *.manifest.json
