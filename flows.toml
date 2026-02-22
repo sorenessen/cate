@@ -1,105 +1,145 @@
 # Demo flows for local testing:
 # include = ["flows/demo-flows.toml"]
 
+# =========================================================
+# Delphonix target
+# =========================================================
+# Change these paths if your site differs.
+# Common patterns: /login.php, /about.php, /profile.php, /index.php
+#
+# NOTE: These flows assume HTML form-style login (x-www-form-urlencoded).
+# If Delphonix uses JSON login, change headers/body_template accordingly.
+# =========================================================
 
-[flows.example-login-sequence]
-description = "Login as admin, then fetch about page."
 
-# Step order
+# ---------------------------------------------------------
+# Basic login + about (password only) — Delphonix
+# (This is a simple sequence demo. Adjust fields as needed.)
+# ---------------------------------------------------------
+[flows.delphonix-login-sequence]
+description = "Delphonix: login as admin (password var) then fetch about page."
 steps = ["login", "about"]
 
-[flows.example-login-sequence.login]
+[flows.delphonix-login-sequence.login]
 method = "POST"
-url = "https://example.com"
+url = "https://delphonix.com/login.php"
+headers = { Content-Type = "application/x-www-form-urlencoded" }
 body_template = "user=admin&pass={password}"
 capture_cookies = true
 stop_on_fail = false
-
-[flows.example-login-sequence.about]
-method = "GET"
-url = "https://example.com"
 expect_status = 200
-max_latency_ms = 500.0          # TEST: or 1000.0
-body_must_contain = "About"     # TEST: proves the page loaded
-# body_must_not_contain = "Dashboard" # TEST: not forbidden
 
-
-# # ---------------------------------------------------------
-# # Demo flow with variable extraction & reuse
-# # ---------------------------------------------------------
-# [flows.example-login-sequence-vars]
-# description = "Login as admin, then fetch about page (with variable extraction demo)."
-# steps = ["login", "about", "echo"]
-
-# [flows.example-login-sequence-vars.login]
-# method = "POST"
-# url = "https://example.com"
-# body_template = "user=admin&pass={password}"
-# capture_cookies = true
-
-# # Extract a marker string from the login page and store it
-# extract_regex = "Login or Sign Up"
-# # max_latency_ms = 1.0
-# store_as = "marker"
-# require_extracted = true   # <— NEW: fail step if regex doesn't match
-
-# [flows.example-login-sequence-vars.about]
-# method = "GET"
-# url = "https://example.com{marker}"
-# expect_status = 200
-
-# [flows.example-login-sequence-vars.echo]
-# method = "GET"
-# url = "https://example.com{urlencode(marker)}&step=echo"
-# expect_status = 200
+[flows.delphonix-login-sequence.about]
+method = "GET"
+url = "https://delphonix.com/about.php"
+expect_status = 200
+max_latency_ms = 1000.0
+# Optional checks — tune to something that definitely appears on /about.php
 # body_must_contain = "About"
-# headers = { X-CATE-Marker = "{marker}" }
-
-# [flows.example-login-cli-vars]
-# description = "Login using CLI-provided username/password, then fetch about page."
-# steps = ["login", "about"]
-
-# [flows.example-login-cli-vars.login]
-# method = "POST"
-# url = "https://example.com"
-# headers = { Content-Type = "application/x-www-form-urlencoded" }
-# body_template = "username={username}&password={password}"
-# capture_cookies = true
-# expect_status = 200
-# body_must_not_contain = "Login or Sign Up"
+# body_must_not_contain = "Login"
 
 
-# [flows.example-login-cli-vars.about]
-# method = "GET"
-# url = "https://example.com"
-# expect_status = 200
-# body_must_not_contain = "Login or Sign Up"
+# ---------------------------------------------------------
+# Variable extraction & reuse demo (marker) — Delphonix
+# This demonstrates extracting something from the login page, storing it,
+# then reusing it in the next request.
+# ---------------------------------------------------------
+[flows.delphonix-login-sequence-vars]
+description = "Delphonix: login + extract marker/token demo, then fetch about page."
+steps = ["login", "about", "echo"]
 
-[flows.example-login-cli-vars]
-description = "Login using CLI username/password with CSRF token, then fetch about page."
+[flows.delphonix-login-sequence-vars.login]
+method = "GET"
+url = "https://delphonix.com/login.php"
+capture_cookies = true
+
+# Extract ANY stable marker from the login page to prove parsing works.
+# Replace this with a real marker on your page (or a CSRF token).
+extract_regex = "Delphonix"
+store_as = "marker"
+require_extracted = true
+
+[flows.delphonix-login-sequence-vars.about]
+method = "GET"
+url = "https://delphonix.com/about.php"
+expect_status = 200
+
+[flows.delphonix-login-sequence-vars.echo]
+method = "GET"
+url = "https://delphonix.com/?marker={urlencode(marker)}&step=echo"
+expect_status = 200
+headers = { X-CATE-Marker = "{marker}" }
+
+
+# ---------------------------------------------------------
+# CLI-provided username/password (no CSRF) — Delphonix
+# Use: --var username=... --var password=...
+# ---------------------------------------------------------
+[flows.delphonix-login-cli-vars]
+description = "Delphonix: login using CLI-provided username/password, then fetch about page."
+steps = ["login", "about"]
+
+[flows.delphonix-login-cli-vars.login]
+method = "POST"
+url = "https://delphonix.com/login.php"
+headers = { Content-Type = "application/x-www-form-urlencoded" }
+body_template = "username={username}&password={password}"
+capture_cookies = true
+expect_status = 200
+
+# Optional: tighten these once you confirm the real response body
+# body_must_not_contain = "Invalid"
+# body_must_not_contain = "Login"
+
+[flows.delphonix-login-cli-vars.about]
+method = "GET"
+url = "https://delphonix.com/"
+expect_status = 200
+body_must_contain = "Logout"
+body_must_not_contain = "Login"
+
+
+
+
+# ---------------------------------------------------------
+# CLI username/password with CSRF token — Delphonix
+# This is the most common “real” web login pattern.
+# ---------------------------------------------------------
+[flows.delphonix-login-cli-vars-csrf]
+description = "Delphonix: get login page, extract CSRF, then POST username/password, then fetch about page."
 steps = ["get-login", "login", "about"]
 
-[flows.example-login-cli-vars.get-login]
+[flows.delphonix-login-cli-vars-csrf.get-login]
 method = "GET"
-url = "https://example.com"
+url = "https://delphonix.com/login.php"
 capture_cookies = true
-extract_regex = 'name="csrf_token" value="([^"]+)"'
+
+# Update this regex if your token name differs.
+# Examples:
+#   name="csrf_token" value="..."
+#   name="_token" value="..."
+#   meta name="csrf-token" content="..."
+extract_regex = "name=\"csrf_token\" value=\"([^\"]+)\""
 store_as = "csrf"
 require_extracted = true
 
-[flows.example-login-cli-vars.login]
+[flows.delphonix-login-cli-vars-csrf.login]
 method = "POST"
-url = "https://example.com"
+url = "https://delphonix.com/login.php"
 capture_cookies = true
 headers = { Content-Type = "application/x-www-form-urlencoded" }
-body_template = "csrf_token={csrf}&redirect=%2Fabout.html&username={username}&password={password}&action=login"
-expect_status = 200
-body_must_not_contain = "Login or Sign Up"
 
-[flows.example-login-cli-vars.about]
+# Update redirect/path + field names to match your form.
+body_template = "csrf_token={csrf}&username={username}&password={password}&action=login"
+expect_status = 200
+
+# Optional: tighten after confirmation
+# body_must_not_contain = "Invalid"
+# body_must_not_contain = "Login"
+
+[flows.delphonix-login-cli-vars-csrf.about]
 method = "GET"
-url = "https://example.com"
+url = "https://delphonix.com/about.php"
 expect_status = 200
-body_must_not_contain = "Login or Sign Up"
-
-
+# Optional: tighten after confirmation
+# body_must_not_contain = "Login"
